@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import market, passive, education, portfolio
+from routers import market, passive, education, portfolio, mt5 as mt5_router
 
 app = FastAPI(title="Trading App API", version="1.0.0")
 
@@ -16,6 +16,7 @@ app.include_router(market.router, prefix="/api/market")
 app.include_router(passive.router, prefix="/api/passive")
 app.include_router(education.router, prefix="/api/education")
 app.include_router(portfolio.router, prefix="/api/portfolio")
+app.include_router(mt5_router.router, prefix="/api/mt5")
 
 
 @app.get("/")
