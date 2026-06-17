@@ -430,14 +430,27 @@ async def get_indicators(symbol: str, timeframe: str = "H1", count: int = 200):
     df["sma20"] = ta.sma(df["close"], length=20)
     df["sma50"] = ta.sma(df["close"], length=50)
     df["rsi"]   = ta.rsi(df["close"], length=14)
-    macd_df     = ta.macd(df["close"])
-    df["macd"]        = macd_df["MACD_12_26_9"]
-    df["macd_signal"] = macd_df["MACDs_12_26_9"]
-    df["macd_hist"]   = macd_df["MACDh_12_26_9"]
-    bb_df        = ta.bbands(df["close"], length=20)
-    df["bb_upper"] = bb_df["BBU_20_2.0"]
-    df["bb_lower"] = bb_df["BBL_20_2.0"]
-    df["bb_mid"]   = bb_df["BBM_20_2.0"]
+    macd_df = ta.macd(df["close"])
+    if macd_df is not None and not macd_df.empty:
+        macd_col   = next((c for c in macd_df.columns if c.startswith("MACD_") and not c.startswith("MACDs_") and not c.startswith("MACDh_")), None)
+        signal_col = next((c for c in macd_df.columns if c.startswith("MACDs_")), None)
+        hist_col   = next((c for c in macd_df.columns if c.startswith("MACDh_")), None)
+        df["macd"]        = macd_df[macd_col]   if macd_col   else None
+        df["macd_signal"] = macd_df[signal_col] if signal_col else None
+        df["macd_hist"]   = macd_df[hist_col]   if hist_col   else None
+    else:
+        df["macd"] = df["macd_signal"] = df["macd_hist"] = None
+
+    bb_df = ta.bbands(df["close"], length=20)
+    if bb_df is not None and not bb_df.empty:
+        upper_col = next((c for c in bb_df.columns if c.startswith("BBU_")), None)
+        mid_col   = next((c for c in bb_df.columns if c.startswith("BBM_")), None)
+        lower_col = next((c for c in bb_df.columns if c.startswith("BBL_")), None)
+        df["bb_upper"] = bb_df[upper_col] if upper_col else None
+        df["bb_mid"]   = bb_df[mid_col]   if mid_col   else None
+        df["bb_lower"] = bb_df[lower_col] if lower_col else None
+    else:
+        df["bb_upper"] = df["bb_mid"] = df["bb_lower"] = None
 
     last = df.iloc[-1]
     rsi_val       = float(last["rsi"])       if pd.notna(last["rsi"])       else 50.0
