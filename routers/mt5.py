@@ -457,14 +457,20 @@ async def get_indicators(symbol: str, timeframe: str = "H1", count: int = 200):
     macd_hist_val = float(last["macd_hist"]) if pd.notna(last["macd_hist"]) else 0.0
 
     if rsi_val < 30 and macd_hist_val > 0:
-        signal        = "COMPRAR"
-        signal_reason = f"RSI sobrevendido ({rsi_val:.1f}) + MACD positivo"
+        signal        = "COMPRAR FUERTE"
+        signal_reason = f"RSI sobrevendido ({rsi_val:.1f}) + MACD positivo — posible rebote"
+    elif rsi_val < 45:
+        signal        = "TENDENCIA ALCISTA"
+        signal_reason = f"RSI ({rsi_val:.1f}) en zona favorable, momentum positivo"
     elif rsi_val > 70 and macd_hist_val < 0:
-        signal        = "VENDER"
-        signal_reason = f"RSI sobrecomprado ({rsi_val:.1f}) + MACD negativo"
+        signal        = "VENDER FUERTE"
+        signal_reason = f"RSI sobrecomprado ({rsi_val:.1f}) + MACD negativo — posible caída"
+    elif rsi_val > 55:
+        signal        = "TENDENCIA BAJISTA"
+        signal_reason = f"RSI ({rsi_val:.1f}) en zona de precaución"
     else:
         signal        = "ESPERAR"
-        signal_reason = f"RSI neutral ({rsi_val:.1f})"
+        signal_reason = f"RSI neutral ({rsi_val:.1f}) — no hay señal clara"
 
     def _f(val, decimals: int = 5):
         return round(float(val), decimals) if pd.notna(val) else None
