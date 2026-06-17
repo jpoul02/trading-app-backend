@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 from datetime import datetime, timezone, timedelta
+from pydantic import BaseModel
 import os
 
 try:
@@ -297,6 +298,116 @@ def mt5_price(symbol: str):
         "spread": round((tick.ask - tick.bid) * (10 ** digits), 1),
         "digits": digits,
         "time": datetime.fromtimestamp(tick.time, tz=timezone.utc).isoformat(),
+    }
+
+
+class OrderRequest(BaseModel):
+    symbol: str
+    action: str  # "buy" o "sell"
+    volume: float
+    sl: float = 0.0
+    tp: float = 0.0
+    comment: str = "Trading App"
+
+
+@router.post("/order")
+async def send_order(req: OrderRequest):
+    ok, err = _connect()
+    if not ok:
+        return {"success": False, "error": err}
+
+    symbol = req.symbol.upper()
+    symbol_info = mt5.symbol_info(symbol)
+    if symbol_info is None:
+        return {"success": False, "error": f"Símbolo {symbol} no encontrado"}
+
+    if not symbol_info.visible:
+        mt5.symbol_select(symbol, True)
+
+    tick = mt5.symbol_info_tick(symbol)
+    if tick is None:
+        return {"success": False, "error": "No se pudo obtener el precio actual"}
+
+    order_type = mt5.ORDER_TYPE_BUY if req.action.lower() == "buy" else mt5.ORDER_TYPE_SELL
+    price = tick.ask if req.action.lower() == "buy" else tick.bid
+
+    request = {
+        "action": mt5.TRADE_ACTION_DEAL,
+        "symbol": symbol,
+        "volume": req.volume,
+        "type": order_type,
+        "price": price,
+        "sl": req.sl if req.sl > 0 else 0.0,
+        "tp": req.tp if req.tp > 0 else 0.0,
+        "deviation": 20,
+        "magic": 234000,
+        "comment": req.comment,
+        "type_time": mt5.ORDER_TIME_GTC,
+        "type_filling": mt5.ORDER_FILLING_IOC,
+    }
+
+    result = mt5.order_send(request)
+    if result is None:
+        return {"success": False, "error": str(mt5.last_error())}
+
+    if result.retcode != mt5.TRADE_RETCODE_DONE:
+        return {"success": False, "error": f"Error {result.retcode}: {result.comment}"}
+
+    return {
+        "success": True,
+        "order": result.order,
+        "volume": result.volume,
+        "price": result.price,
+        "comment": result.comment,
+    }
+
+
+@router.post("/close/{ticket}")
+async def close_position(ticket: int):
+    ok, err = _connect()
+    if not ok:
+        return {"success": False, "error": err}
+
+    positions = mt5.positions_get(ticket=ticket)
+    if not positions:
+        return {"success": False, "error": f"Posición #{ticket} no encontrada"}
+
+    pos = positions[0]
+    close_type = mt5.ORDER_TYPE_SELL if pos.type == 0 else mt5.ORDER_TYPE_BUY
+
+    tick = mt5.symbol_info_tick(pos.symbol)
+    if tick is None:
+        return {"success": False, "error": "No se pudo obtener precio actual"}
+
+    price = tick.bid if pos.type == 0 else tick.ask
+
+    request = {
+        "action": mt5.TRADE_ACTION_DEAL,
+        "symbol": pos.symbol,
+        "volume": pos.volume,
+        "type": close_type,
+        "position": ticket,
+        "price": price,
+        "deviation": 20,
+        "magic": 234000,
+        "comment": "Close by Trading App",
+        "type_time": mt5.ORDER_TIME_GTC,
+        "type_filling": mt5.ORDER_FILLING_IOC,
+    }
+
+    result = mt5.order_send(request)
+    if result is None:
+        return {"success": False, "error": str(mt5.last_error())}
+
+    if result.retcode != mt5.TRADE_RETCODE_DONE:
+        return {"success": False, "error": f"Error {result.retcode}: {result.comment}"}
+
+    return {
+        "success": True,
+        "order": result.order,
+        "volume": result.volume,
+        "price": result.price,
+        "comment": result.comment,
     }
 
 
