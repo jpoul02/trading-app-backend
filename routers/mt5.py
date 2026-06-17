@@ -232,6 +232,42 @@ def mt5_symbols():
     return {"connected": True, "symbols": result}
 
 
+TIMEFRAME_MAP = {
+    "M1": mt5.TIMEFRAME_M1 if MT5_AVAILABLE else None,
+    "M5": mt5.TIMEFRAME_M5 if MT5_AVAILABLE else None,
+    "M15": mt5.TIMEFRAME_M15 if MT5_AVAILABLE else None,
+    "M30": mt5.TIMEFRAME_M30 if MT5_AVAILABLE else None,
+    "H1": mt5.TIMEFRAME_H1 if MT5_AVAILABLE else None,
+    "H4": mt5.TIMEFRAME_H4 if MT5_AVAILABLE else None,
+    "D1": mt5.TIMEFRAME_D1 if MT5_AVAILABLE else None,
+}
+
+
+@router.get("/candles/{symbol}")
+async def get_candles(symbol: str, timeframe: str = "H1", count: int = 100):
+    ok, err = _ensure_initialized()
+    if not ok:
+        return {"error": err}
+    tf = TIMEFRAME_MAP.get(timeframe.upper())
+    if tf is None:
+        return {"error": f"Timeframe inválido: {timeframe}"}
+    count = min(count, 500)
+    rates = mt5.copy_rates_from_pos(symbol.upper(), tf, 0, count)
+    if rates is None:
+        return {"error": f"No se pudieron obtener velas para {symbol}: {mt5.last_error()}"}
+    return [
+        {
+            "time": int(r["time"]),
+            "open": float(r["open"]),
+            "high": float(r["high"]),
+            "low": float(r["low"]),
+            "close": float(r["close"]),
+            "volume": int(r["tick_volume"]),
+        }
+        for r in rates
+    ]
+
+
 @router.get("/price/{symbol}")
 def mt5_price(symbol: str):
     ok, err = _connect()
