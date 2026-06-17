@@ -10,6 +10,16 @@ except ImportError:
     MT5_AVAILABLE = False
 
 from dotenv import load_dotenv
+
+try:
+    import pandas as pd
+    import pandas_ta as ta  # type: ignore
+    PANDAS_TA_AVAILABLE = True
+except ImportError:
+    pd = None  # type: ignore
+    ta = None  # type: ignore
+    PANDAS_TA_AVAILABLE = False
+
 load_dotenv()
 
 MT5_LOGIN  = os.getenv("MT5_LOGIN", "")
@@ -287,4 +297,72 @@ def mt5_price(symbol: str):
         "spread": round((tick.ask - tick.bid) * (10 ** digits), 1),
         "digits": digits,
         "time": datetime.fromtimestamp(tick.time, tz=timezone.utc).isoformat(),
+    }
+
+
+@router.get("/indicators/{symbol}")
+async def get_indicators(symbol: str, timeframe: str = "H1", count: int = 200):
+    if not PANDAS_TA_AVAILABLE:
+        return {"error": "pandas-ta no instalado en este servidor"}
+    ok, err = _ensure_initialized()
+    if not ok:
+        return {"error": err}
+    tf = TIMEFRAME_MAP.get(timeframe.upper())
+    if tf is None:
+        return {"error": f"Timeframe inválido: {timeframe}"}
+    count = min(count, 500)
+    rates = mt5.copy_rates_from_pos(symbol.upper(), tf, 0, count)
+    if rates is None:
+        return {"error": f"No se pudieron obtener datos: {mt5.last_error()}"}
+
+    df = pd.DataFrame(rates)
+    df["sma20"] = ta.sma(df["close"], length=20)
+    df["sma50"] = ta.sma(df["close"], length=50)
+    df["rsi"]   = ta.rsi(df["close"], length=14)
+    macd_df     = ta.macd(df["close"])
+    df["macd"]        = macd_df["MACD_12_26_9"]
+    df["macd_signal"] = macd_df["MACDs_12_26_9"]
+    df["macd_hist"]   = macd_df["MACDh_12_26_9"]
+    bb_df        = ta.bbands(df["close"], length=20)
+    df["bb_upper"] = bb_df["BBU_20_2.0"]
+    df["bb_lower"] = bb_df["BBL_20_2.0"]
+    df["bb_mid"]   = bb_df["BBM_20_2.0"]
+
+    last = df.iloc[-1]
+    rsi_val       = float(last["rsi"])       if pd.notna(last["rsi"])       else 50.0
+    macd_hist_val = float(last["macd_hist"]) if pd.notna(last["macd_hist"]) else 0.0
+
+    if rsi_val < 30 and macd_hist_val > 0:
+        signal        = "COMPRAR"
+        signal_reason = f"RSI sobrevendido ({rsi_val:.1f}) + MACD positivo"
+    elif rsi_val > 70 and macd_hist_val < 0:
+        signal        = "VENDER"
+        signal_reason = f"RSI sobrecomprado ({rsi_val:.1f}) + MACD negativo"
+    else:
+        signal        = "ESPERAR"
+        signal_reason = f"RSI neutral ({rsi_val:.1f})"
+
+    def _f(val, decimals: int = 5):
+        return round(float(val), decimals) if pd.notna(val) else None
+
+    return {
+        "signal":        signal,
+        "signal_reason": signal_reason,
+        "last_rsi":      round(rsi_val, 2),
+        "last_macd":     _f(last["macd"]),
+        "last_close":    float(last["close"]),
+        "candles": [
+            {
+                "time":        int(row["time"]),
+                "sma20":       _f(row["sma20"]),
+                "sma50":       _f(row["sma50"]),
+                "rsi":         _f(row["rsi"], 2),
+                "macd":        _f(row["macd"]),
+                "macd_signal": _f(row["macd_signal"]),
+                "macd_hist":   _f(row["macd_hist"]),
+                "bb_upper":    _f(row["bb_upper"]),
+                "bb_lower":    _f(row["bb_lower"]),
+            }
+            for _, row in df.iterrows()
+        ],
     }
