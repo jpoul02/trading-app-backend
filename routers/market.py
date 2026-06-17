@@ -54,6 +54,23 @@ def get_stocks():
     return result
 
 
+@router.get("/global")
+async def get_global_stats():
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get("https://api.coingecko.com/api/v3/global")
+            r.raise_for_status()
+            data = r.json()["data"]
+            return {
+                "btc_dominance": round(data["market_cap_percentage"].get("btc", 0), 1),
+                "total_market_cap": data["total_market_cap"].get("usd", 0),
+                "total_volume_24h": data["total_volume"].get("usd", 0),
+                "active_cryptocurrencies": data["active_cryptocurrencies"],
+            }
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @router.get("/fear-greed")
 async def get_fear_greed():
     url = "https://api.alternative.me/fng/"
