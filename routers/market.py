@@ -54,17 +54,22 @@ def get_stocks():
     return result
 
 
+FEAR_GREED_FALLBACK = {"value": 50, "classification": "Neutral", "timestamp": "N/A"}
+
 @router.get("/fear-greed")
 async def get_fear_greed():
     url = "https://api.alternative.me/fng/"
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.get(url)
-    if resp.status_code != 200:
-        raise HTTPException(status_code=resp.status_code, detail="Fear & Greed API error")
-    data = resp.json()
-    entry = data["data"][0]
-    return {
-        "value": int(entry["value"]),
-        "classification": entry["value_classification"],
-        "timestamp": entry["timestamp"],
-    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url)
+        if resp.status_code != 200:
+            return FEAR_GREED_FALLBACK
+        data = resp.json()
+        entry = data["data"][0]
+        return {
+            "value": int(entry["value"]),
+            "classification": entry["value_classification"],
+            "timestamp": entry["timestamp"],
+        }
+    except (httpx.ConnectTimeout, httpx.HTTPError):
+        return FEAR_GREED_FALLBACK
