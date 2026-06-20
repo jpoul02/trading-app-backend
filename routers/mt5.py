@@ -1,6 +1,7 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from datetime import datetime, timezone, timedelta
 from pydantic import BaseModel
+import asyncio
 import os
 
 try:
@@ -199,7 +200,7 @@ def mt5_history():
     deals = mt5.history_deals_get(date_from, date_to)
     if deals is None:
         return {"connected": True, "deals": []}
-    closed = [d for d in deals if d.entry == 1]
+    closed = [d for d in deals if d.entry == 1 and d.symbol != ""]
     closed_sorted = sorted(closed, key=lambda d: d.time, reverse=True)[:20]
     result = []
     for d in closed_sorted:
@@ -301,6 +302,20 @@ def mt5_price(symbol: str):
     }
 
 
+def _get_supported_filling(symbol: str):
+    """Detect filling mode supported by the symbol/broker."""
+    info = mt5.symbol_info(symbol)
+    if info is None:
+        return mt5.ORDER_FILLING_RETURN
+    filling_mode = info.filling_mode
+    if filling_mode & 1:
+        return mt5.ORDER_FILLING_FOK
+    elif filling_mode & 2:
+        return mt5.ORDER_FILLING_IOC
+    else:
+        return mt5.ORDER_FILLING_RETURN
+
+
 class OrderRequest(BaseModel):
     symbol: str
     action: str  # "buy" o "sell"
@@ -343,7 +358,7 @@ async def send_order(req: OrderRequest):
         "magic": 234000,
         "comment": req.comment,
         "type_time": mt5.ORDER_TIME_GTC,
-        "type_filling": mt5.ORDER_FILLING_IOC,
+        "type_filling": _get_supported_filling(symbol),
     }
 
     result = mt5.order_send(request)
@@ -392,7 +407,7 @@ async def close_position(ticket: int):
         "magic": 234000,
         "comment": "Close by Trading App",
         "type_time": mt5.ORDER_TIME_GTC,
-        "type_filling": mt5.ORDER_FILLING_IOC,
+        "type_filling": _get_supported_filling(pos.symbol),
     }
 
     result = mt5.order_send(request)
@@ -496,3 +511,88 @@ async def get_indicators(symbol: str, timeframe: str = "H1", count: int = 200):
             for _, row in df.iterrows()
         ],
     }
+
+
+# ─── WebSocket endpoints ──────────────────────────────────────────────────────
+
+@router.websocket("/ws/account")
+async def ws_account(websocket: WebSocket):
+    """Pushes account info + open positions every 1 s."""
+    await websocket.accept()
+    try:
+        while True:
+            ok, err = _connect()
+            if not ok:
+                await websocket.send_json({
+                    "connected": False,
+                    "error": err,
+                    "account": None,
+                    "positions": [],
+                })
+            else:
+                info = mt5.account_info()
+                raw_pos = mt5.positions_get() or []
+                positions = [
+                    {
+                        "ticket": p.ticket,
+                        "symbol": p.symbol,
+                        "type": "BUY" if p.type == 0 else "SELL",
+                        "volume": p.volume,
+                        "open_price": p.price_open,
+                        "current_price": p.price_current,
+                        "sl": p.sl,
+                        "tp": p.tp,
+                        "profit": p.profit,
+                        "swap": p.swap,
+                        "open_time": datetime.fromtimestamp(p.time, tz=timezone.utc).isoformat(),
+                        "comment": p.comment,
+                    }
+                    for p in raw_pos
+                ]
+                await websocket.send_json({
+                    "connected": True,
+                    "account": {
+                        "login": info.login,
+                        "name": info.name,
+                        "balance": info.balance,
+                        "equity": info.equity,
+                        "profit": info.profit,
+                        "margin": info.margin,
+                        "margin_free": info.margin_free,
+                        "currency": info.currency,
+                        "leverage": info.leverage,
+                        "server": info.server,
+                    } if info else None,
+                    "positions": positions,
+                })
+            await asyncio.sleep(1)
+    except WebSocketDisconnect:
+        pass
+
+
+@router.websocket("/ws/prices")
+async def ws_prices(websocket: WebSocket, symbols: str = "EURUSD"):
+    """Pushes bid/ask/spread for requested symbols every 500 ms."""
+    await websocket.accept()
+    sym_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    try:
+        while True:
+            ok, _ = _ensure_initialized()
+            data: dict = {}
+            if ok:
+                for sym in sym_list:
+                    tick = mt5.symbol_info_tick(sym)
+                    info = mt5.symbol_info(sym)
+                    if tick:
+                        digits = info.digits if info else 5
+                        data[sym] = {
+                            "bid": tick.bid,
+                            "ask": tick.ask,
+                            "spread": round((tick.ask - tick.bid) * (10 ** digits), 1),
+                            "digits": digits,
+                            "time": tick.time,
+                        }
+            await websocket.send_json(data)
+            await asyncio.sleep(0.5)
+    except WebSocketDisconnect:
+        pass
