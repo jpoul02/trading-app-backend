@@ -341,6 +341,19 @@ def place_order(symbol: str, action: str, volume: float, sl: float = 0.0,
     order_type = mt5.ORDER_TYPE_BUY if action.lower() == "buy" else mt5.ORDER_TYPE_SELL
     price = tick.ask if action.lower() == "buy" else tick.bid
 
+    account = mt5.account_info()
+    if account is not None:
+        required_margin = mt5.order_calc_margin(order_type, symbol, volume, price)
+        if required_margin is not None and required_margin > account.margin_free * 0.9:
+            return {
+                "success": False,
+                "error": (
+                    f"Margen insuficiente: el volumen calculado ({volume} lotes) necesita "
+                    f"~{required_margin:,.2f} {account.currency} de margen, disponible "
+                    f"{account.margin_free:,.2f} — stop demasiado ajustado para ese tamaño"
+                ),
+            }
+
     request = {
         "action": mt5.TRADE_ACTION_DEAL,
         "symbol": symbol,
