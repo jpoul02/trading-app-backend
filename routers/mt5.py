@@ -28,12 +28,9 @@ MT5_LOGIN  = os.getenv("MT5_LOGIN", "")
 MT5_PASS   = os.getenv("MT5_PASSWORD", "")
 MT5_SERVER = os.getenv("MT5_SERVER", "")
 
-# Paths to try in order; None = let MT5 find the terminal itself
-_MT5_PATHS = [
-    None,
-    r"C:\Program Files\MetaTrader 5\terminal64.exe",
-    r"C:\Program Files (x86)\MetaTrader 5\terminal64.exe",
-]
+# path=None makes the package probe a hardcoded x86 fallback that doesn't
+# exist on this machine, masking the real error — always pass the real path.
+_MT5_PATH = r"C:\Program Files\MetaTrader 5\terminal64.exe"
 
 _initialized = False
 
@@ -58,11 +55,9 @@ def _ensure_initialized() -> tuple[bool, str]:
         # Connection dropped (e.g. MT5 was restarted); reset and retry below
         _initialized = False
 
-    for path in _MT5_PATHS:
-        kwargs = {"path": path} if path else {}
-        if mt5.initialize(**kwargs):
-            _initialized = True
-            return True, ""
+    if mt5.initialize(path=_MT5_PATH):
+        _initialized = True
+        return True, ""
 
     return False, f"mt5.initialize() falló: {mt5.last_error()} — abrí MT5 primero"
 
@@ -325,13 +320,13 @@ class OrderRequest(BaseModel):
     comment: str = "Trading App"
 
 
-@router.post("/order")
-async def send_order(req: OrderRequest):
+def place_order(symbol: str, action: str, volume: float, sl: float = 0.0,
+                 tp: float = 0.0, comment: str = "Trading App", magic: int = 234000) -> dict:
     ok, err = _connect()
     if not ok:
         return {"success": False, "error": err}
 
-    symbol = req.symbol.upper()
+    symbol = symbol.upper()
     symbol_info = mt5.symbol_info(symbol)
     if symbol_info is None:
         return {"success": False, "error": f"Símbolo {symbol} no encontrado"}
@@ -343,20 +338,20 @@ async def send_order(req: OrderRequest):
     if tick is None:
         return {"success": False, "error": "No se pudo obtener el precio actual"}
 
-    order_type = mt5.ORDER_TYPE_BUY if req.action.lower() == "buy" else mt5.ORDER_TYPE_SELL
-    price = tick.ask if req.action.lower() == "buy" else tick.bid
+    order_type = mt5.ORDER_TYPE_BUY if action.lower() == "buy" else mt5.ORDER_TYPE_SELL
+    price = tick.ask if action.lower() == "buy" else tick.bid
 
     request = {
         "action": mt5.TRADE_ACTION_DEAL,
         "symbol": symbol,
-        "volume": req.volume,
+        "volume": volume,
         "type": order_type,
         "price": price,
-        "sl": req.sl if req.sl > 0 else 0.0,
-        "tp": req.tp if req.tp > 0 else 0.0,
+        "sl": sl if sl > 0 else 0.0,
+        "tp": tp if tp > 0 else 0.0,
         "deviation": 20,
-        "magic": 234000,
-        "comment": req.comment,
+        "magic": magic,
+        "comment": comment,
         "type_time": mt5.ORDER_TIME_GTC,
         "type_filling": _get_supported_filling(symbol),
     }
@@ -377,8 +372,12 @@ async def send_order(req: OrderRequest):
     }
 
 
-@router.post("/close/{ticket}")
-async def close_position(ticket: int):
+@router.post("/order")
+async def send_order(req: OrderRequest):
+    return place_order(req.symbol, req.action, req.volume, req.sl, req.tp, req.comment)
+
+
+def close_position_by_ticket(ticket: int) -> dict:
     ok, err = _connect()
     if not ok:
         return {"success": False, "error": err}
@@ -404,7 +403,7 @@ async def close_position(ticket: int):
         "position": ticket,
         "price": price,
         "deviation": 20,
-        "magic": 234000,
+        "magic": pos.magic,
         "comment": "Close by Trading App",
         "type_time": mt5.ORDER_TIME_GTC,
         "type_filling": _get_supported_filling(pos.symbol),
@@ -424,6 +423,11 @@ async def close_position(ticket: int):
         "price": result.price,
         "comment": result.comment,
     }
+
+
+@router.post("/close/{ticket}")
+async def close_position(ticket: int):
+    return close_position_by_ticket(ticket)
 
 
 @router.get("/indicators/{symbol}")
