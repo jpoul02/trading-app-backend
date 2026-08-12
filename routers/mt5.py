@@ -2,6 +2,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from datetime import datetime, timezone, timedelta
 from pydantic import BaseModel
 import asyncio
+import math
 import os
 
 try:
@@ -344,15 +345,22 @@ def place_order(symbol: str, action: str, volume: float, sl: float = 0.0,
     account = mt5.account_info()
     if account is not None:
         required_margin = mt5.order_calc_margin(order_type, symbol, volume, price)
-        if required_margin is not None and required_margin > account.margin_free * 0.9:
-            return {
-                "success": False,
-                "error": (
-                    f"Margen insuficiente: el volumen calculado ({volume} lotes) necesita "
-                    f"~{required_margin:,.2f} {account.currency} de margen, disponible "
-                    f"{account.margin_free:,.2f} — stop demasiado ajustado para ese tamaño"
-                ),
-            }
+        if required_margin is not None and required_margin > account.margin_free * 0.9 and required_margin > 0:
+            # Volume too large for available margin (common with tight ATR-based stops on
+            # short timeframes) — scale down to the largest volume the account can afford
+            # instead of rejecting outright. Real $ risk ends up below the configured
+            # risk_pct in this case, which is the safe direction to be wrong in.
+            margin_per_lot = required_margin / volume
+            max_volume = math.floor((account.margin_free * 0.9 / margin_per_lot) / symbol_info.volume_step) * symbol_info.volume_step
+            if max_volume < symbol_info.volume_min:
+                return {
+                    "success": False,
+                    "error": (
+                        f"Margen insuficiente incluso al volumen mínimo ({symbol_info.volume_min} lotes) "
+                        f"— disponible {account.margin_free:,.2f} {account.currency}"
+                    ),
+                }
+            volume = round(max_volume, 8)
 
     request = {
         "action": mt5.TRADE_ACTION_DEAL,
