@@ -15,6 +15,9 @@ def _state_to_status(state: dict) -> dict:
         "disabled_reason": state["disabled_reason"],
         "day_start_balance": state["day_start_balance"],
         "account_start_balance": state["account_start_balance"],
+        "current_balance": None,
+        "current_equity": None,
+        "current_profit": None,
         "symbols": [s for s in state["symbols"].split(",") if s],
         "timeframe": state["timeframe"],
     }
@@ -23,7 +26,18 @@ def _state_to_status(state: dict) -> dict:
 @router.get("/status")
 def get_status():
     bot_db.init_db(DB_PATH)
-    return _state_to_status(bot_db.get_state(DB_PATH))
+    status = _state_to_status(bot_db.get_state(DB_PATH))
+
+    from routers import mt5 as mt5_router
+    ok, _ = mt5_router._connect()
+    if ok:
+        account = mt5_router.mt5.account_info()
+        if account is not None:
+            status["current_balance"] = account.balance
+            status["current_equity"] = account.equity
+            status["current_profit"] = account.profit
+
+    return status
 
 
 @router.post("/start")
