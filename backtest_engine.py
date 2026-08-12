@@ -1,3 +1,5 @@
+import pandas as pd
+
 from bot_engine import (
     add_indicators, calc_position_size, calc_sl_tp,
     compute_mean_reversion_signal, compute_signal,
@@ -7,10 +9,17 @@ from bot_engine import (
 def simulate_strategy(candles_df, strategy: str, risk_pct: float, symbol_meta: dict,
                        starting_balance: float, warmup: int = 200, signal_fn=None) -> dict:
     if signal_fn is None:
+        # All indicators here (SMA/RSI/MACD/BBands/ATR/Stochastic) are trailing —
+        # computing them once over the full series gives identical values to
+        # recomputing on every growing prefix window, without the O(n^2) cost of
+        # doing that per step. No lookahead: row i's indicators never depend on
+        # rows after i either way.
+        enriched = add_indicators(candles_df.copy())
         base_fn = compute_signal if strategy == "trend" else compute_mean_reversion_signal
 
         def signal_fn(window):
-            return base_fn(add_indicators(window.copy()))
+            idx = len(window) - 1
+            return base_fn(enriched.iloc[: idx + 1])
 
     balance = starting_balance
     trades: list = []
@@ -115,3 +124,18 @@ def compute_backtest_metrics(trades: list, starting_balance: float) -> dict:
         "equity_curve": equity_curve,
         "trades": trades,
     }
+
+
+def fetch_historical_candles(symbol: str, timeframe: str, date_from, date_to):
+    from routers import mt5 as mt5_router
+
+    ok, _ = mt5_router._ensure_initialized()
+    if not ok:
+        return None
+    tf = mt5_router.TIMEFRAME_MAP.get(timeframe.upper())
+    if tf is None:
+        return None
+    rates = mt5_router.mt5.copy_rates_range(symbol.upper(), tf, date_from, date_to)
+    if rates is None or len(rates) == 0:
+        return None
+    return pd.DataFrame(rates)

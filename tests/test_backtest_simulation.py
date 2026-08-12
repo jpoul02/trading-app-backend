@@ -1,3 +1,6 @@
+import math
+import time
+
 import pandas as pd
 import backtest_engine
 
@@ -116,3 +119,30 @@ def test_does_not_open_a_second_trade_while_one_is_open():
     )
 
     assert result["total_trades"] == 0  # never hits SL/TP in this fixture, so still "open" — logged as 0 closed trades
+
+
+def test_default_signal_fn_runs_fast_on_a_realistic_series():
+    # Regression guard for the O(n^2) bug: recomputing indicators on every growing
+    # window instead of once over the full series. 2000 rows should complete in well
+    # under a second once indicators are computed a single time up front.
+    n = 2000
+    rows = []
+    for i in range(n):
+        base = 1.10 + 0.05 * math.sin(i / 40) + (i % 7) * 0.0003
+        rows.append({
+            "time": i, "open": base, "close": base + 0.0002,
+            "high": base + 0.0015, "low": base - 0.0015,
+        })
+    df = pd.DataFrame(rows)
+
+    start = time.monotonic()
+    result = backtest_engine.simulate_strategy(
+        df, "mean_reversion", risk_pct=0.01,
+        symbol_meta={"tick_value": 1.0, "tick_size": 0.00001, "volume_step": 0.01, "volume_min": 0.01},
+        starting_balance=100000, warmup=200,
+    )
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 5.0
+    assert "total_trades" in result
+    assert result["total_trades"] >= 0
