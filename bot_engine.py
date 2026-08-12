@@ -1,5 +1,13 @@
+import asyncio
+import traceback
+from datetime import datetime, timezone
+
 import pandas as pd
 import pandas_ta as ta
+
+import bot_db
+
+TIMEFRAME_MINUTES = {"M1": 1, "M5": 5, "M15": 15, "M30": 30, "H1": 60, "H4": 240, "D1": 1440}
 
 
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
@@ -179,3 +187,93 @@ def process_symbol_tick(symbol: str, candles_df: pd.DataFrame, state: dict,
         }
 
     return {"action": "rejected", "symbol": symbol, "reason": result.get("error", "unknown error")}
+
+
+def next_candle_sleep_seconds(timeframe: str, now: datetime | None = None) -> float:
+    now = now or datetime.now(timezone.utc)
+    minutes = TIMEFRAME_MINUTES.get(timeframe.upper(), 15)
+    interval_seconds = minutes * 60
+    elapsed_today = (now.hour * 3600 + now.minute * 60 + now.second) % interval_seconds
+    remaining = interval_seconds - elapsed_today
+    return max(remaining, 5)
+
+
+async def run_bot_loop():
+    from routers import mt5 as mt5_router
+
+    bot_db.init_db()
+    last_candle_time: dict[str, int] = {}
+
+    while True:
+        try:
+            state = bot_db.get_state()
+            ok, _ = mt5_router._ensure_initialized()
+            if ok:
+                account = mt5_router.mt5.account_info()
+                if account is not None:
+                    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                    changes = check_kill_switch(state, account.balance, account.equity, today)
+                    if changes:
+                        bot_db.update_state(**changes)
+                        state.update(changes)
+
+                    for symbol in state["symbols"].split(","):
+                        symbol = symbol.strip().upper()
+                        if not symbol:
+                            continue
+
+                        tf = mt5_router.TIMEFRAME_MAP.get(state["timeframe"].upper())
+                        rates = mt5_router.mt5.copy_rates_from_pos(symbol, tf, 0, 200)
+                        if rates is None or len(rates) == 0:
+                            continue
+
+                        latest_time = int(rates[-1]["time"])
+                        if last_candle_time.get(symbol) == latest_time:
+                            continue  # same candle already processed
+                        last_candle_time[symbol] = latest_time
+
+                        df = pd.DataFrame(rates)
+                        df = add_indicators(df)
+
+                        positions = mt5_router.mt5.positions_get(symbol=symbol) or []
+                        bot_positions = [p for p in positions if p.magic == state["magic"]]
+
+                        info = mt5_router.mt5.symbol_info(symbol)
+                        if info is None:
+                            continue
+                        symbol_meta = {
+                            "tick_value": info.trade_tick_value,
+                            "tick_size": info.trade_tick_size,
+                            "volume_step": info.volume_step,
+                            "volume_min": info.volume_min,
+                        }
+
+                        def _place_order(**kw):
+                            return mt5_router.place_order(**kw)
+
+                        result = process_symbol_tick(
+                            symbol, df, state, bot_positions, account.balance,
+                            symbol_meta, _place_order,
+                        )
+
+                        if result["action"] == "opened":
+                            bot_db.log_trade(
+                                ticket=result["ticket"], symbol=symbol, action=result["direction"],
+                                volume=result["volume"], price=result["price"], sl=result["sl"],
+                                tp=result["tp"], signal_reason=result["signal_reason"], status="open",
+                            )
+                        elif result["action"] == "rejected":
+                            bot_db.log_trade(
+                                ticket=None, symbol=symbol, action="unknown", volume=0,
+                                price=0, sl=0, tp=0, signal_reason=result["reason"], status="rejected",
+                            )
+
+            sleep_for = min(
+                next_candle_sleep_seconds(state.get("timeframe", "M15")) if ok else 30,
+                60,
+            )
+        except Exception:
+            traceback.print_exc()
+            sleep_for = 30
+
+        await asyncio.sleep(sleep_for)
