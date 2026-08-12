@@ -64,3 +64,15 @@ def test_add_indicators_adds_expected_columns():
     for col in ["sma20", "sma50", "rsi", "macd", "macd_signal", "macd_hist",
                 "bb_upper", "bb_mid", "bb_lower", "atr"]:
         assert col in result.columns
+
+
+def test_add_indicators_adds_stochastic_columns():
+    rates = [
+        {"time": 1000 + i * 60, "open": 1.10 + i * 0.0001, "high": 1.1005 + i * 0.0001,
+         "low": 1.0995 + i * 0.0001, "close": 1.10 + i * 0.0001, "tick_volume": 100}
+        for i in range(60)
+    ]
+    df = pd.DataFrame(rates)
+    result = bot_engine.add_indicators(df)
+    assert "stoch_k" in result.columns
+    assert "stoch_d" in result.columns

@@ -98,3 +98,37 @@ def test_list_trades_respects_limit_and_order(tmp_path):
     assert len(trades) == 2
     assert trades[0]["ticket"] == 4  # most recent first
     assert trades[1]["ticket"] == 3
+
+
+def test_init_db_migration_adds_mode_and_obsidian_path_to_existing_table(tmp_path):
+    db_path = str(tmp_path / "test.db")
+    bot_db.init_db(db_path)  # first run — creates table without assuming new columns exist twice
+    bot_db.init_db(db_path)  # second run on an already-migrated table must not error
+
+    trade_id = bot_db.log_trade(
+        db_path, ticket=1, symbol="EURUSD", action="buy", volume=0.1,
+        price=1.1, sl=1.09, tp=1.11, signal_reason="x", status="open",
+        mode="trend", obsidian_path="Trades/EURUSD-1.md",
+    )
+    trades = bot_db.list_trades(db_path)
+    assert trades[0]["id"] == trade_id
+    assert trades[0]["mode"] == "trend"
+    assert trades[0]["obsidian_path"] == "Trades/EURUSD-1.md"
+
+
+def test_get_open_trades_returns_only_open_status(tmp_path):
+    db_path = str(tmp_path / "test.db")
+    bot_db.init_db(db_path)
+    open_id = bot_db.log_trade(
+        db_path, ticket=1, symbol="EURUSD", action="buy", volume=0.1,
+        price=1.1, sl=1.09, tp=1.11, signal_reason="x", status="open", mode="trend",
+    )
+    bot_db.log_trade(
+        db_path, ticket=2, symbol="GBPUSD", action="sell", volume=0.1,
+        price=1.2, sl=1.21, tp=1.19, signal_reason="x", status="closed", mode="trend",
+    )
+
+    open_trades = bot_db.get_open_trades(db_path)
+
+    assert len(open_trades) == 1
+    assert open_trades[0]["id"] == open_id

@@ -43,6 +43,15 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     else:
         df["atr"] = None
 
+    stoch_df = ta.stoch(df["high"], df["low"], df["close"], k=5, d=3, smooth_k=3) if {"high", "low"}.issubset(df.columns) else None
+    if stoch_df is not None and not stoch_df.empty:
+        k_col = next((c for c in stoch_df.columns if c.startswith("STOCHk_")), None)
+        d_col = next((c for c in stoch_df.columns if c.startswith("STOCHd_")), None)
+        df["stoch_k"] = stoch_df[k_col] if k_col else None
+        df["stoch_d"] = stoch_df[d_col] if d_col else None
+    else:
+        df["stoch_k"] = df["stoch_d"] = None
+
     return df
 
 

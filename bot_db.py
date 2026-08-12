@@ -24,6 +24,7 @@ STATE_COLUMNS = list(DEFAULT_STATE.keys())
 TRADE_COLUMNS = [
     "ticket", "symbol", "action", "volume", "price", "sl", "tp",
     "signal_reason", "status", "profit", "opened_at", "closed_at",
+    "mode", "obsidian_path",
 ]
 
 
@@ -71,6 +72,11 @@ def init_db(db_path: str = DB_PATH) -> None:
                 closed_at TEXT
             )
         """)
+        existing_cols = {row["name"] for row in conn.execute("PRAGMA table_info(bot_trades)").fetchall()}
+        for col in ("mode", "obsidian_path"):
+            if col not in existing_cols:
+                conn.execute(f"ALTER TABLE bot_trades ADD COLUMN {col} TEXT")
+
         existing = conn.execute("SELECT id FROM bot_state WHERE id = 1").fetchone()
         if existing is None:
             cols = ", ".join(STATE_COLUMNS)
@@ -134,6 +140,15 @@ def update_trade(db_path: str, trade_id: int, **fields) -> None:
         fields["trade_id"] = trade_id
         conn.execute(f"UPDATE bot_trades SET {set_clause} WHERE id = :trade_id", fields)
         conn.commit()
+    finally:
+        conn.close()
+
+
+def get_open_trades(db_path: str = DB_PATH) -> list[dict]:
+    conn = _connect(db_path)
+    try:
+        rows = conn.execute("SELECT * FROM bot_trades WHERE status = 'open'").fetchall()
+        return [dict(r) for r in rows]
     finally:
         conn.close()
 
