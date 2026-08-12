@@ -285,6 +285,10 @@ def process_symbol_tick_mean_reversion(symbol: str, candles_df: pd.DataFrame, st
     return {"action": "rejected", "symbol": symbol, "reason": result.get("error", "unknown error")}
 
 
+def find_closed_trades(open_trades: list, live_tickets: set) -> list:
+    return [t for t in open_trades if t.get("ticket") is not None and t["ticket"] not in live_tickets]
+
+
 def next_candle_sleep_seconds(timeframe: str, now: datetime | None = None) -> float:
     now = now or datetime.now(timezone.utc)
     minutes = TIMEFRAME_MINUTES.get(timeframe.upper(), 15)
