@@ -69,3 +69,62 @@ def compute_signal(df: pd.DataFrame) -> dict:
         "last_close": float(last["close"]),
         "atr": atr_val,
     }
+
+
+def calc_sl_tp(entry_price: float, atr: float, direction: str,
+                sl_mult: float = 1.5, tp_mult: float = 2.5) -> tuple[float, float]:
+    if direction == "buy":
+        sl = entry_price - sl_mult * atr
+        tp = entry_price + tp_mult * atr
+    else:
+        sl = entry_price + sl_mult * atr
+        tp = entry_price - tp_mult * atr
+    return sl, tp
+
+
+def calc_position_size(balance: float, risk_pct: float, sl_distance: float,
+                        tick_value: float, tick_size: float,
+                        volume_step: float, volume_min: float) -> float:
+    risk_amount = balance * risk_pct
+    loss_per_lot = (sl_distance / tick_size) * tick_value
+    if loss_per_lot <= 0:
+        return volume_min
+    raw_volume = risk_amount / loss_per_lot
+    steps = int(raw_volume / volume_step)
+    volume = round(steps * volume_step, 8)
+    return max(volume, volume_min)
+
+
+def check_kill_switch(state: dict, balance: float, equity: float, today: str) -> dict:
+    changes: dict = {}
+
+    account_start_balance = state.get("account_start_balance")
+    if account_start_balance is None:
+        account_start_balance = balance
+        changes["account_start_balance"] = balance
+
+    day_start_balance = state.get("day_start_balance")
+    if state.get("day_start_date") != today:
+        day_start_balance = balance
+        changes["day_start_balance"] = balance
+        changes["day_start_date"] = today
+
+    if state.get("kill_switch_tripped"):
+        return changes  # already tripped — only manual reset clears it
+
+    daily_loss_pct = 0.0
+    if day_start_balance:
+        daily_loss_pct = (day_start_balance - equity) / day_start_balance
+
+    drawdown_pct = 0.0
+    if account_start_balance:
+        drawdown_pct = (account_start_balance - equity) / account_start_balance
+
+    if daily_loss_pct >= state["daily_loss_limit_pct"]:
+        changes["kill_switch_tripped"] = 1
+        changes["disabled_reason"] = "daily_loss_limit"
+    elif drawdown_pct >= state["max_drawdown_pct"]:
+        changes["kill_switch_tripped"] = 1
+        changes["disabled_reason"] = "max_drawdown"
+
+    return changes
