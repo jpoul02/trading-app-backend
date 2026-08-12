@@ -63,6 +63,19 @@ def test_orchestration_opens_buy_with_tp_at_bb_mid():
     assert captured["sl"] < 1.0975
 
 
+def test_opened_result_reports_actual_filled_volume_not_requested():
+    df = _df_with_last_row(close=1.0975, rsi=25.0, stoch_k=15.0, bb_mid=1.1000)
+
+    def fake_place_order(**kw):
+        return {"success": True, "order": 555, "volume": 3.0, "price": 1.0975, "comment": "ok"}
+
+    result = bot_engine.process_symbol_tick_mean_reversion(
+        "EURUSD", df, _state(), [], 1000, _symbol_meta(), place_order_fn=fake_place_order,
+    )
+
+    assert result["volume"] == 3.0
+
+
 def test_orchestration_no_action_when_position_already_open():
     df = _df_with_last_row(close=1.0975, rsi=25.0, stoch_k=15.0)
     result = bot_engine.process_symbol_tick_mean_reversion(
