@@ -375,10 +375,13 @@ async def run_bot_loop():
                         def _place_order(**kw):
                             return mt5_router.place_order(**kw)
 
-                        for mode, positions_for_mode, process_fn in (
-                            ("trend", trend_positions, process_symbol_tick),
-                            ("mean_reversion", mr_positions, process_symbol_tick_mean_reversion),
+                        for mode, positions_for_mode, process_fn, enabled_key in (
+                            ("trend", trend_positions, process_symbol_tick, "trend_enabled"),
+                            ("mean_reversion", mr_positions, process_symbol_tick_mean_reversion, "mean_reversion_enabled"),
                         ):
+                            if not state.get(enabled_key, 1):
+                                continue
+
                             result = process_fn(symbol, df, state, positions_for_mode,
                                                  account.balance, symbol_meta, _place_order)
 

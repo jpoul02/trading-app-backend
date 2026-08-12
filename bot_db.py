@@ -17,6 +17,8 @@ DEFAULT_STATE = {
     "daily_loss_limit_pct": 0.03,
     "max_drawdown_pct": 0.10,
     "magic": 424001,
+    "trend_enabled": 1,
+    "mean_reversion_enabled": 1,
 }
 
 STATE_COLUMNS = list(DEFAULT_STATE.keys())
@@ -52,6 +54,8 @@ def init_db(db_path: str = DB_PATH) -> None:
                 daily_loss_limit_pct REAL NOT NULL,
                 max_drawdown_pct REAL NOT NULL,
                 magic INTEGER NOT NULL,
+                trend_enabled INTEGER NOT NULL DEFAULT 1,
+                mean_reversion_enabled INTEGER NOT NULL DEFAULT 1,
                 updated_at TEXT
             )
         """)
@@ -76,6 +80,11 @@ def init_db(db_path: str = DB_PATH) -> None:
         for col in ("mode", "obsidian_path"):
             if col not in existing_cols:
                 conn.execute(f"ALTER TABLE bot_trades ADD COLUMN {col} TEXT")
+
+        state_cols = {row["name"] for row in conn.execute("PRAGMA table_info(bot_state)").fetchall()}
+        for col in ("trend_enabled", "mean_reversion_enabled"):
+            if col not in state_cols:
+                conn.execute(f"ALTER TABLE bot_state ADD COLUMN {col} INTEGER NOT NULL DEFAULT 1")
 
         existing = conn.execute("SELECT id FROM bot_state WHERE id = 1").fetchone()
         if existing is None:

@@ -80,6 +80,8 @@ def get_config():
         "risk_pct": state["risk_pct"],
         "daily_loss_limit_pct": state["daily_loss_limit_pct"],
         "max_drawdown_pct": state["max_drawdown_pct"],
+        "trend_enabled": bool(state["trend_enabled"]),
+        "mean_reversion_enabled": bool(state["mean_reversion_enabled"]),
     }
 
 
@@ -89,6 +91,8 @@ class ConfigUpdate(BaseModel):
     risk_pct: float | None = None
     daily_loss_limit_pct: float | None = None
     max_drawdown_pct: float | None = None
+    trend_enabled: bool | None = None
+    mean_reversion_enabled: bool | None = None
 
 
 @router.put("/config")
@@ -105,5 +109,9 @@ def update_config(body: ConfigUpdate):
         fields["daily_loss_limit_pct"] = body.daily_loss_limit_pct
     if body.max_drawdown_pct is not None:
         fields["max_drawdown_pct"] = body.max_drawdown_pct
+    if body.trend_enabled is not None:
+        fields["trend_enabled"] = int(body.trend_enabled)
+    if body.mean_reversion_enabled is not None:
+        fields["mean_reversion_enabled"] = int(body.mean_reversion_enabled)
     bot_db.update_state(DB_PATH, **fields)
     return get_config()
