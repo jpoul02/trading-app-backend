@@ -153,12 +153,20 @@ def get_open_trades(db_path: str = DB_PATH) -> list[dict]:
         conn.close()
 
 
-def list_trades(db_path: str = DB_PATH, limit: int = 50) -> list[dict]:
+def list_trades(db_path: str = DB_PATH, limit: int = 50, offset: int = 0) -> list[dict]:
     conn = _connect(db_path)
     try:
         rows = conn.execute(
-            "SELECT * FROM bot_trades ORDER BY id DESC LIMIT ?", (limit,)
+            "SELECT * FROM bot_trades ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset)
         ).fetchall()
         return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def count_trades(db_path: str = DB_PATH) -> int:
+    conn = _connect(db_path)
+    try:
+        return conn.execute("SELECT COUNT(*) FROM bot_trades").fetchone()[0]
     finally:
         conn.close()

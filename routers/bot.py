@@ -48,9 +48,12 @@ def reset_kill_switch():
 
 
 @router.get("/trades")
-def get_trades(limit: int = 50):
+def get_trades(limit: int = 20, offset: int = 0):
     bot_db.init_db(DB_PATH)
-    return bot_db.list_trades(DB_PATH, limit=limit)
+    return {
+        "trades": bot_db.list_trades(DB_PATH, limit=limit, offset=offset),
+        "total": bot_db.count_trades(DB_PATH),
+    }
 
 
 @router.get("/config")

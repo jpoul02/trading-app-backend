@@ -60,9 +60,27 @@ def test_trades_list(client):
     resp = client.get("/api/bot/trades")
 
     assert resp.status_code == 200
-    trades = resp.json()
-    assert len(trades) == 1
-    assert trades[0]["symbol"] == "EURUSD"
+    body = resp.json()
+    assert body["total"] == 1
+    assert len(body["trades"]) == 1
+    assert body["trades"][0]["symbol"] == "EURUSD"
+
+
+def test_trades_list_pagination(client):
+    import routers.bot as bot_router
+    for i in range(5):
+        bot_db.log_trade(
+            bot_router.DB_PATH, ticket=i, symbol="EURUSD", action="buy", volume=0.1,
+            price=1.1, sl=1.09, tp=1.11, signal_reason="test", status="open",
+        )
+
+    resp = client.get("/api/bot/trades", params={"limit": 2, "offset": 2})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 5
+    assert len(body["trades"]) == 2
+    assert body["trades"][0]["ticket"] == 2
 
 
 def test_get_and_update_config(client):

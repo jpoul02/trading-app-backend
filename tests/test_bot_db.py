@@ -100,6 +100,34 @@ def test_list_trades_respects_limit_and_order(tmp_path):
     assert trades[1]["ticket"] == 3
 
 
+def test_list_trades_respects_offset(tmp_path):
+    db_path = str(tmp_path / "test.db")
+    bot_db.init_db(db_path)
+    for i in range(5):
+        bot_db.log_trade(
+            db_path, ticket=i, symbol="EURUSD", action="buy", volume=0.1,
+            price=1.1, sl=1.09, tp=1.11, signal_reason="x", status="open",
+        )
+
+    page2 = bot_db.list_trades(db_path, limit=2, offset=2)
+
+    assert len(page2) == 2
+    assert page2[0]["ticket"] == 2
+    assert page2[1]["ticket"] == 1
+
+
+def test_count_trades(tmp_path):
+    db_path = str(tmp_path / "test.db")
+    bot_db.init_db(db_path)
+    assert bot_db.count_trades(db_path) == 0
+    for i in range(3):
+        bot_db.log_trade(
+            db_path, ticket=i, symbol="EURUSD", action="buy", volume=0.1,
+            price=1.1, sl=1.09, tp=1.11, signal_reason="x", status="open",
+        )
+    assert bot_db.count_trades(db_path) == 3
+
+
 def test_init_db_migration_adds_mode_and_obsidian_path_to_existing_table(tmp_path):
     db_path = str(tmp_path / "test.db")
     bot_db.init_db(db_path)  # first run — creates table without assuming new columns exist twice
