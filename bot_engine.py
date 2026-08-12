@@ -198,6 +198,93 @@ def process_symbol_tick(symbol: str, candles_df: pd.DataFrame, state: dict,
     return {"action": "rejected", "symbol": symbol, "reason": result.get("error", "unknown error")}
 
 
+def compute_mean_reversion_signal(df: pd.DataFrame) -> dict:
+    """Reads the last row of an indicator-enriched df and returns a mean-reversion signal."""
+    last = df.iloc[-1]
+    close = float(last["close"])
+    rsi_val = float(last["rsi"]) if pd.notna(last["rsi"]) else 50.0
+    stoch_k = float(last["stoch_k"]) if pd.notna(last["stoch_k"]) else 50.0
+    bb_lower = float(last["bb_lower"]) if pd.notna(last["bb_lower"]) else close
+    bb_upper = float(last["bb_upper"]) if pd.notna(last["bb_upper"]) else close
+    bb_mid = float(last["bb_mid"]) if pd.notna(last["bb_mid"]) else close
+    atr_val = float(last["atr"]) if "atr" in df.columns and pd.notna(last["atr"]) else 0.0
+
+    if close <= bb_lower and rsi_val < 30 and stoch_k < 20:
+        signal = "COMPRAR FUERTE"
+        signal_reason = f"Precio tocó banda inferior + RSI ({rsi_val:.1f}) y Stochastic ({stoch_k:.1f}) sobrevendidos — reversión a la media"
+    elif close >= bb_upper and rsi_val > 70 and stoch_k > 80:
+        signal = "VENDER FUERTE"
+        signal_reason = f"Precio tocó banda superior + RSI ({rsi_val:.1f}) y Stochastic ({stoch_k:.1f}) sobrecomprados — reversión a la media"
+    else:
+        signal = "ESPERAR"
+        signal_reason = "Sin confirmación de reversión a la media"
+
+    return {
+        "signal": signal,
+        "signal_reason": signal_reason,
+        "last_close": close,
+        "atr": atr_val,
+        "bb_mid": bb_mid,
+    }
+
+
+def process_symbol_tick_mean_reversion(symbol: str, candles_df: pd.DataFrame, state: dict,
+                                        open_positions: list, balance: float, symbol_meta: dict,
+                                        place_order_fn) -> dict:
+    if not state["running"]:
+        return {"action": "none", "reason": "bot_stopped"}
+
+    if state["kill_switch_tripped"]:
+        return {"action": "none", "reason": state.get("disabled_reason") or "kill_switch"}
+
+    if open_positions:
+        return {"action": "none", "reason": "position_already_open"}
+
+    signal_info = compute_mean_reversion_signal(candles_df)
+    if signal_info["signal"] not in ("COMPRAR FUERTE", "VENDER FUERTE"):
+        return {"action": "none", "reason": "no_strong_signal", "signal": signal_info["signal"]}
+
+    direction = "buy" if signal_info["signal"] == "COMPRAR FUERTE" else "sell"
+    entry_price = signal_info["last_close"]
+    atr = signal_info["atr"] or entry_price * 0.001
+    sl, _ = calc_sl_tp(entry_price, atr, direction)
+    tp = signal_info["bb_mid"]
+
+    # Guard against inverted geometry (bb_mid on the wrong side of entry)
+    if (direction == "buy" and tp <= entry_price) or (direction == "sell" and tp >= entry_price):
+        return {"action": "none", "reason": "invalid_tp_geometry"}
+
+    sl_distance = abs(entry_price - sl)
+    volume = calc_position_size(
+        balance=balance,
+        risk_pct=state["risk_pct"],
+        sl_distance=sl_distance,
+        tick_value=symbol_meta["tick_value"],
+        tick_size=symbol_meta["tick_size"],
+        volume_step=symbol_meta["volume_step"],
+        volume_min=symbol_meta["volume_min"],
+    )
+
+    mr_magic = state.get("magic", 424001) + 1
+    result = place_order_fn(symbol=symbol, action=direction, volume=volume, sl=sl, tp=tp,
+                             comment=signal_info["signal"], magic=mr_magic)
+
+    if result.get("success"):
+        return {
+            "action": "opened",
+            "ticket": result.get("order"),
+            "symbol": symbol,
+            "direction": direction,
+            "volume": volume,
+            "price": result.get("price", entry_price),
+            "sl": sl,
+            "tp": tp,
+            "signal_reason": signal_info["signal_reason"],
+        }
+
+    return {"action": "rejected", "symbol": symbol, "reason": result.get("error", "unknown error")}
+
+
 def next_candle_sleep_seconds(timeframe: str, now: datetime | None = None) -> float:
     now = now or datetime.now(timezone.utc)
     minutes = TIMEFRAME_MINUTES.get(timeframe.upper(), 15)
