@@ -128,3 +128,54 @@ def check_kill_switch(state: dict, balance: float, equity: float, today: str) ->
         changes["disabled_reason"] = "max_drawdown"
 
     return changes
+
+
+def process_symbol_tick(symbol: str, candles_df: pd.DataFrame, state: dict,
+                         open_positions: list, balance: float, symbol_meta: dict,
+                         place_order_fn) -> dict:
+    if not state["running"]:
+        return {"action": "none", "reason": "bot_stopped"}
+
+    if state["kill_switch_tripped"]:
+        return {"action": "none", "reason": state.get("disabled_reason") or "kill_switch"}
+
+    if open_positions:
+        return {"action": "none", "reason": "position_already_open"}
+
+    signal_info = compute_signal(candles_df)
+    if signal_info["signal"] not in ("COMPRAR FUERTE", "VENDER FUERTE"):
+        return {"action": "none", "reason": "no_strong_signal", "signal": signal_info["signal"]}
+
+    direction = "buy" if signal_info["signal"] == "COMPRAR FUERTE" else "sell"
+    entry_price = signal_info["last_close"]
+    atr = signal_info["atr"] or entry_price * 0.001  # fallback if ATR unavailable
+    sl, tp = calc_sl_tp(entry_price, atr, direction)
+    sl_distance = abs(entry_price - sl)
+
+    volume = calc_position_size(
+        balance=balance,
+        risk_pct=state["risk_pct"],
+        sl_distance=sl_distance,
+        tick_value=symbol_meta["tick_value"],
+        tick_size=symbol_meta["tick_size"],
+        volume_step=symbol_meta["volume_step"],
+        volume_min=symbol_meta["volume_min"],
+    )
+
+    result = place_order_fn(symbol=symbol, action=direction, volume=volume, sl=sl, tp=tp,
+                             comment=signal_info["signal"], magic=state.get("magic", 424001))
+
+    if result.get("success"):
+        return {
+            "action": "opened",
+            "ticket": result.get("order"),
+            "symbol": symbol,
+            "direction": direction,
+            "volume": volume,
+            "price": result.get("price", entry_price),
+            "sl": sl,
+            "tp": tp,
+            "signal_reason": signal_info["signal_reason"],
+        }
+
+    return {"action": "rejected", "symbol": symbol, "reason": result.get("error", "unknown error")}
