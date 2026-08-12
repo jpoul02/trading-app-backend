@@ -29,6 +29,12 @@ TRADE_COLUMNS = [
     "mode", "obsidian_path",
 ]
 
+BACKTEST_RUN_COLUMNS = [
+    "symbol", "timeframe", "strategy", "date_from", "date_to",
+    "risk_pct", "starting_balance", "total_trades", "win_rate_pct",
+    "total_profit", "max_drawdown_pct", "profit_factor", "full_result_json",
+]
+
 
 def _connect(db_path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
@@ -80,6 +86,26 @@ def init_db(db_path: str = DB_PATH) -> None:
         for col in ("mode", "obsidian_path"):
             if col not in existing_cols:
                 conn.execute(f"ALTER TABLE bot_trades ADD COLUMN {col} TEXT")
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS backtest_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                timeframe TEXT NOT NULL,
+                strategy TEXT NOT NULL,
+                date_from TEXT NOT NULL,
+                date_to TEXT NOT NULL,
+                risk_pct REAL,
+                starting_balance REAL,
+                total_trades INTEGER,
+                win_rate_pct REAL,
+                total_profit REAL,
+                max_drawdown_pct REAL,
+                profit_factor REAL,
+                full_result_json TEXT,
+                run_at TEXT
+            )
+        """)
 
         state_cols = {row["name"] for row in conn.execute("PRAGMA table_info(bot_state)").fetchall()}
         for col in ("trend_enabled", "mean_reversion_enabled"):
@@ -177,5 +203,41 @@ def count_trades(db_path: str = DB_PATH) -> int:
     conn = _connect(db_path)
     try:
         return conn.execute("SELECT COUNT(*) FROM bot_trades").fetchone()[0]
+    finally:
+        conn.close()
+
+
+def save_backtest_run(db_path: str = DB_PATH, **fields) -> int:
+    conn = _connect(db_path)
+    try:
+        fields = {c: fields.get(c) for c in BACKTEST_RUN_COLUMNS}
+        fields["run_at"] = datetime.now(timezone.utc).isoformat()
+        cols = ", ".join(fields.keys())
+        placeholders = ", ".join(f":{c}" for c in fields.keys())
+        cur = conn.execute(f"INSERT INTO backtest_runs ({cols}) VALUES ({placeholders})", fields)
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def list_backtest_runs(db_path: str = DB_PATH, limit: int = 50) -> list[dict]:
+    conn = _connect(db_path)
+    try:
+        cols = [c for c in BACKTEST_RUN_COLUMNS if c != "full_result_json"]
+        select_cols = ", ".join(["id", "run_at"] + cols)
+        rows = conn.execute(
+            f"SELECT {select_cols} FROM backtest_runs ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_backtest_run(db_path: str = DB_PATH, run_id: int = None) -> dict | None:
+    conn = _connect(db_path)
+    try:
+        row = conn.execute("SELECT * FROM backtest_runs WHERE id = ?", (run_id,)).fetchone()
+        return dict(row) if row else None
     finally:
         conn.close()
