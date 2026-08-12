@@ -300,6 +300,7 @@ def next_candle_sleep_seconds(timeframe: str, now: datetime | None = None) -> fl
 
 async def run_bot_loop():
     from routers import mt5 as mt5_router
+    import obsidian_journal
 
     bot_db.init_db()
     last_candle_time: dict[str, int] = {}
@@ -317,6 +318,26 @@ async def run_bot_loop():
                         bot_db.update_state(**changes)
                         state.update(changes)
 
+                    # ── Close detection ─────────────────────────────────────
+                    open_trades = bot_db.get_open_trades()
+                    if open_trades:
+                        live_positions = mt5_router.mt5.positions_get() or []
+                        live_tickets = {p.ticket for p in live_positions}
+                        for trade in find_closed_trades(open_trades, live_tickets):
+                            deals = mt5_router.mt5.history_deals_get(position=trade["ticket"]) or []
+                            close_deal = next((d for d in deals if d.entry == 1), None)
+                            if close_deal is None:
+                                continue
+                            closed_at = datetime.fromtimestamp(close_deal.time, tz=timezone.utc).isoformat()
+                            bot_db.update_trade(bot_db.DB_PATH, trade["id"], status="closed",
+                                                 profit=close_deal.profit, closed_at=closed_at)
+                            if trade.get("obsidian_path"):
+                                try:
+                                    obsidian_journal.write_trade_closed(trade["obsidian_path"], close_deal.profit, closed_at)
+                                except Exception:
+                                    traceback.print_exc()
+
+                    # ── Signal evaluation (trend + mean reversion) ──────────
                     for symbol in state["symbols"].split(","):
                         symbol = symbol.strip().upper()
                         if not symbol:
@@ -336,7 +357,10 @@ async def run_bot_loop():
                         df = add_indicators(df)
 
                         positions = mt5_router.mt5.positions_get(symbol=symbol) or []
-                        bot_positions = [p for p in positions if p.magic == state["magic"]]
+                        trend_magic = state["magic"]
+                        mr_magic = state["magic"] + 1
+                        trend_positions = [p for p in positions if p.magic == trend_magic]
+                        mr_positions = [p for p in positions if p.magic == mr_magic]
 
                         info = mt5_router.mt5.symbol_info(symbol)
                         if info is None:
@@ -351,22 +375,37 @@ async def run_bot_loop():
                         def _place_order(**kw):
                             return mt5_router.place_order(**kw)
 
-                        result = process_symbol_tick(
-                            symbol, df, state, bot_positions, account.balance,
-                            symbol_meta, _place_order,
-                        )
+                        for mode, positions_for_mode, process_fn in (
+                            ("trend", trend_positions, process_symbol_tick),
+                            ("mean_reversion", mr_positions, process_symbol_tick_mean_reversion),
+                        ):
+                            result = process_fn(symbol, df, state, positions_for_mode,
+                                                 account.balance, symbol_meta, _place_order)
 
-                        if result["action"] == "opened":
-                            bot_db.log_trade(
-                                ticket=result["ticket"], symbol=symbol, action=result["direction"],
-                                volume=result["volume"], price=result["price"], sl=result["sl"],
-                                tp=result["tp"], signal_reason=result["signal_reason"], status="open",
-                            )
-                        elif result["action"] == "rejected":
-                            bot_db.log_trade(
-                                ticket=None, symbol=symbol, action="unknown", volume=0,
-                                price=0, sl=0, tp=0, signal_reason=result["reason"], status="rejected",
-                            )
+                            if result["action"] == "opened":
+                                opened_at = datetime.now(timezone.utc).isoformat()
+                                obsidian_path = None
+                                try:
+                                    obsidian_path = obsidian_journal.write_trade_opened({
+                                        "symbol": symbol, "mode": mode, "action": result["direction"],
+                                        "volume": result["volume"], "price": result["price"],
+                                        "sl": result["sl"], "tp": result["tp"],
+                                        "opened_at": opened_at, "signal_reason": result["signal_reason"],
+                                    })
+                                except Exception:
+                                    traceback.print_exc()
+                                bot_db.log_trade(
+                                    ticket=result["ticket"], symbol=symbol, action=result["direction"],
+                                    volume=result["volume"], price=result["price"], sl=result["sl"],
+                                    tp=result["tp"], signal_reason=result["signal_reason"], status="open",
+                                    mode=mode, obsidian_path=obsidian_path, opened_at=opened_at,
+                                )
+                            elif result["action"] == "rejected":
+                                bot_db.log_trade(
+                                    ticket=None, symbol=symbol, action="unknown", volume=0,
+                                    price=0, sl=0, tp=0, signal_reason=result["reason"], status="rejected",
+                                    mode=mode,
+                                )
 
             sleep_for = min(
                 next_candle_sleep_seconds(state.get("timeframe", "M15")) if ok else 30,
