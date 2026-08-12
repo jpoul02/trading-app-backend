@@ -6,3 +6,4 @@ httpx
 python-dotenv
 pandas
 MetaTrader5
+pytest
