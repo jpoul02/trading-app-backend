@@ -344,15 +344,28 @@ def place_order(symbol: str, action: str, volume: float, sl: float = 0.0,
 
     account = mt5.account_info()
     if account is not None:
+        budget = account.margin_free * 0.9
         required_margin = mt5.order_calc_margin(order_type, symbol, volume, price)
-        if required_margin is not None and required_margin > account.margin_free * 0.9 and required_margin > 0:
+        if required_margin is None or required_margin > budget:
             # Volume too large for available margin (common with tight ATR-based stops on
-            # short timeframes) — scale down to the largest volume the account can afford
-            # instead of rejecting outright. Real $ risk ends up below the configured
-            # risk_pct in this case, which is the safe direction to be wrong in.
-            margin_per_lot = required_margin / volume
-            max_volume = math.floor((account.margin_free * 0.9 / margin_per_lot) / symbol_info.volume_step) * symbol_info.volume_step
-            if max_volume < symbol_info.volume_min:
+            # short timeframes, and margin per lot is NOT linear — brokers charge a higher
+            # rate per lot as size grows). Shrink iteratively, re-checking the real margin
+            # via order_calc_margin each time, instead of trusting a single ratio estimate.
+            candidate = volume
+            for _ in range(50):
+                if required_margin is None or required_margin <= 0:
+                    candidate = 0
+                    break
+                ratio = budget / required_margin
+                candidate = math.floor((candidate * ratio) / symbol_info.volume_step) * symbol_info.volume_step
+                if candidate < symbol_info.volume_min:
+                    candidate = 0
+                    break
+                required_margin = mt5.order_calc_margin(order_type, symbol, candidate, price)
+                if required_margin is not None and required_margin <= budget:
+                    break
+
+            if not candidate or candidate < symbol_info.volume_min:
                 return {
                     "success": False,
                     "error": (
@@ -360,7 +373,7 @@ def place_order(symbol: str, action: str, volume: float, sl: float = 0.0,
                         f"— disponible {account.margin_free:,.2f} {account.currency}"
                     ),
                 }
-            volume = round(max_volume, 8)
+            volume = round(candidate, 8)
 
     request = {
         "action": mt5.TRADE_ACTION_DEAL,
