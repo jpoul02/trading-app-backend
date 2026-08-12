@@ -1,9 +1,11 @@
+import json
 from datetime import datetime
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
 import backtest_engine
+import bot_db
 
 router = APIRouter()
 
@@ -42,6 +44,17 @@ def _run_one(symbol: str, timeframe: str, date_from: datetime, date_to: datetime
     result["symbol"] = symbol.upper()
     result["timeframe"] = timeframe.upper()
     result["strategy"] = strategy
+
+    bot_db.init_db()
+    run_id = bot_db.save_backtest_run(
+        symbol=result["symbol"], timeframe=result["timeframe"], strategy=strategy,
+        date_from=date_from.date().isoformat(), date_to=date_to.date().isoformat(),
+        risk_pct=risk_pct, starting_balance=starting_balance,
+        total_trades=result["total_trades"], win_rate_pct=result["win_rate_pct"],
+        total_profit=result["total_profit"], max_drawdown_pct=result["max_drawdown_pct"],
+        profit_factor=result["profit_factor"], full_result_json=json.dumps(result),
+    )
+    result["run_id"] = run_id
     return result
 
 
@@ -57,3 +70,19 @@ def run_backtest(req: BacktestRequest):
         }
 
     return _run_one(req.symbol, req.timeframe, date_from, date_to, req.strategy, req.risk_pct, req.starting_balance)
+
+
+@router.get("/history")
+def get_history(limit: int = 50):
+    bot_db.init_db()
+    return bot_db.list_backtest_runs(limit=limit)
+
+
+@router.get("/history/{run_id}")
+def get_history_run(run_id: int):
+    bot_db.init_db()
+    run = bot_db.get_backtest_run(run_id=run_id)
+    if run is None:
+        return {"error": "Backtest no encontrado"}
+    run["full_result"] = json.loads(run.pop("full_result_json"))
+    return run
