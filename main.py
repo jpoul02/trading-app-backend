@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
-from routers import market, passive, education, portfolio, mt5 as mt5_router, bot as bot_router, backtest as backtest_router
+from routers import market, passive, education, portfolio, mt5 as mt5_router, bot as bot_router, backtest as backtest_router, ml as ml_router
 import asyncio
 import bot_engine
 
@@ -38,6 +38,7 @@ app.include_router(portfolio.router, prefix="/api/portfolio")
 app.include_router(mt5_router.router, prefix="/api/mt5")
 app.include_router(bot_router.router, prefix="/api/bot")
 app.include_router(backtest_router.router, prefix="/api/backtest")
+app.include_router(ml_router.router, prefix="/api/ml")
 
 
 @app.get("/")
