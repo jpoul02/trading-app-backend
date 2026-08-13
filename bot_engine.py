@@ -207,6 +207,20 @@ def process_symbol_tick(symbol: str, candles_df: pd.DataFrame, state: dict,
     if signal_info["signal"] not in ("COMPRAR FUERTE", "VENDER FUERTE"):
         return {"action": "none", "reason": "no_strong_signal", "signal": signal_info["signal"]}
 
+    if state.get("ml_filter_trend_enabled"):
+        import ml_entry_filter
+        import ml_features
+        model = ml_entry_filter.load_entry_filter_model_cached("trend")
+        if model is not None:
+            features = ml_features.extract_entry_features(candles_df, len(candles_df) - 1)
+            win_prob = ml_entry_filter.predict_win_probability(model, features)
+            min_confidence = state.get("ml_filter_min_confidence", 0.5)
+            if ml_entry_filter.should_veto_entry(win_prob, min_confidence):
+                return {
+                    "action": "rejected", "symbol": symbol,
+                    "reason": f"Vetado por ML (confianza {win_prob:.0%})",
+                }
+
     direction = "buy" if signal_info["signal"] == "COMPRAR FUERTE" else "sell"
     entry_price = signal_info["last_close"]
     atr = signal_info["atr"] or entry_price * 0.001  # fallback if ATR unavailable
@@ -259,6 +273,20 @@ def process_symbol_tick_fast(symbol: str, candles_df: pd.DataFrame, state: dict,
     sell_signals = ("VENDER FUERTE", "TENDENCIA BAJISTA")
     if signal_info["signal"] not in buy_signals + sell_signals:
         return {"action": "none", "reason": "no_strong_signal", "signal": signal_info["signal"]}
+
+    if state.get("ml_filter_fast_enabled"):
+        import ml_entry_filter
+        import ml_features
+        model = ml_entry_filter.load_entry_filter_model_cached("fast")
+        if model is not None:
+            features = ml_features.extract_entry_features(candles_df, len(candles_df) - 1)
+            win_prob = ml_entry_filter.predict_win_probability(model, features)
+            min_confidence = state.get("ml_filter_min_confidence", 0.5)
+            if ml_entry_filter.should_veto_entry(win_prob, min_confidence):
+                return {
+                    "action": "rejected", "symbol": symbol,
+                    "reason": f"Vetado por ML (confianza {win_prob:.0%})",
+                }
 
     direction = "buy" if signal_info["signal"] in buy_signals else "sell"
     entry_price = signal_info["last_close"]
