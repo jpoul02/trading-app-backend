@@ -208,6 +208,29 @@ def test_update_config_gates_symbol_change_on_already_enabled_mode(client, monke
     assert config["trend_symbols"] != ["XAUUSD"]  # rejected — not persisted
 
 
+def test_update_config_unrelated_field_does_not_gate_already_enabled_mode(client, monkeypatch):
+    # trend is enabled by default with EURUSD failing its backtest. Saving an unrelated
+    # field (trading_capital) while risk_pct/timeframe/symbols stay at their current
+    # values must NOT re-run the gate — only an actual change to trend's own inputs should.
+    calls = []
+    monkeypatch.setattr(
+        bot_router, "check_mode_backtest_gate",
+        lambda *a, **kw: calls.append(1) or {"passed": False, "failures": [{"symbol": "EURUSD", "profit_factor": 0.5, "error": None}]},
+    )
+
+    resp = client.put("/api/bot/config", json={
+        "trend_symbols": ["EURUSD", "GBPUSD", "USDJPY", "USDCHF"],  # same as current state
+        "timeframe": "M15",  # same as current state
+        "risk_pct": 0.01,  # same as current state
+        "trading_capital": 20,
+    })
+
+    assert resp.status_code == 200
+    assert calls == []
+    config = client.get("/api/bot/config").json()
+    assert config["trading_capital"] == 20
+
+
 def test_update_config_rejects_enable_with_explicit_empty_symbols(client, monkeypatch):
     calls = []
     monkeypatch.setattr(

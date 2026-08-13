@@ -17,6 +17,10 @@ def _split_symbols(csv: str) -> list[str]:
     return [s for s in csv.split(",") if s]
 
 
+def _float_changed(new: float, old: float, tol: float = 1e-9) -> bool:
+    return abs(new - old) > tol
+
+
 def _state_to_status(state: dict) -> dict:
     all_symbols = list(dict.fromkeys(
         _split_symbols(state["trend_symbols"])
@@ -100,6 +104,10 @@ def get_config():
         "trend_enabled": bool(state["trend_enabled"]),
         "mean_reversion_enabled": bool(state["mean_reversion_enabled"]),
         "fast_enabled": bool(state["fast_enabled"]),
+        "max_loss_pct": state["max_loss_pct"],
+        "trailing_trigger_pct": state["trailing_trigger_pct"],
+        "trailing_distance_atr": state["trailing_distance_atr"],
+        "trading_capital": state["trading_capital"],
     }
 
 
@@ -115,6 +123,10 @@ class ConfigUpdate(BaseModel):
     trend_enabled: bool | None = None
     mean_reversion_enabled: bool | None = None
     fast_enabled: bool | None = None
+    max_loss_pct: float | None = None
+    trailing_trigger_pct: float | None = None
+    trailing_distance_atr: float | None = None
+    trading_capital: float | None = None
 
 
 def check_mode_backtest_gate(mode: str, symbols: list[str], timeframe: str, risk_pct: float,
@@ -149,8 +161,10 @@ def update_config(body: ConfigUpdate):
 
     trend_enabled_after = body.trend_enabled if body.trend_enabled is not None else bool(state["trend_enabled"])
     touches_trend = (
-        body.trend_enabled is True or body.trend_symbols is not None
-        or body.timeframe is not None or body.risk_pct is not None
+        (body.trend_enabled is True and not bool(state["trend_enabled"]))
+        or (body.trend_symbols is not None and body.trend_symbols != _split_symbols(state["trend_symbols"]))
+        or (body.timeframe is not None and body.timeframe.upper() != state["timeframe"])
+        or (body.risk_pct is not None and _float_changed(body.risk_pct, state["risk_pct"]))
     )
     if trend_enabled_after and touches_trend:
         symbols = body.trend_symbols if body.trend_symbols is not None else _split_symbols(state["trend_symbols"])
@@ -164,8 +178,11 @@ def update_config(body: ConfigUpdate):
         else bool(state["mean_reversion_enabled"])
     )
     touches_mr = (
-        body.mean_reversion_enabled is True or body.mean_reversion_symbols is not None
-        or body.timeframe is not None or body.risk_pct is not None
+        (body.mean_reversion_enabled is True and not bool(state["mean_reversion_enabled"]))
+        or (body.mean_reversion_symbols is not None
+            and body.mean_reversion_symbols != _split_symbols(state["mean_reversion_symbols"]))
+        or (body.timeframe is not None and body.timeframe.upper() != state["timeframe"])
+        or (body.risk_pct is not None and _float_changed(body.risk_pct, state["risk_pct"]))
     )
     if mr_enabled_after and touches_mr:
         symbols = (
@@ -179,8 +196,10 @@ def update_config(body: ConfigUpdate):
 
     fast_enabled_after = body.fast_enabled if body.fast_enabled is not None else bool(state["fast_enabled"])
     touches_fast = (
-        body.fast_enabled is True or body.fast_symbols is not None
-        or body.fast_timeframe is not None or body.risk_pct is not None
+        (body.fast_enabled is True and not bool(state["fast_enabled"]))
+        or (body.fast_symbols is not None and body.fast_symbols != _split_symbols(state["fast_symbols"]))
+        or (body.fast_timeframe is not None and body.fast_timeframe.upper() != state["fast_timeframe"])
+        or (body.risk_pct is not None and _float_changed(body.risk_pct, state["risk_pct"]))
     )
     if fast_enabled_after and touches_fast:
         symbols = body.fast_symbols if body.fast_symbols is not None else _split_symbols(state["fast_symbols"])
@@ -212,5 +231,13 @@ def update_config(body: ConfigUpdate):
         fields["mean_reversion_enabled"] = int(body.mean_reversion_enabled)
     if body.fast_enabled is not None:
         fields["fast_enabled"] = int(body.fast_enabled)
+    if body.max_loss_pct is not None:
+        fields["max_loss_pct"] = body.max_loss_pct
+    if body.trailing_trigger_pct is not None:
+        fields["trailing_trigger_pct"] = body.trailing_trigger_pct
+    if body.trailing_distance_atr is not None:
+        fields["trailing_distance_atr"] = body.trailing_distance_atr
+    if body.trading_capital is not None:
+        fields["trading_capital"] = body.trading_capital if body.trading_capital > 0 else None
     bot_db.update_state(DB_PATH, **fields)
     return get_config()

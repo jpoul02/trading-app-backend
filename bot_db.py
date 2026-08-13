@@ -24,6 +24,10 @@ DEFAULT_STATE = {
     "fast_symbols": "EURUSD,GBPUSD,USDJPY,USDCHF",
     "fast_timeframe": "M5",
     "fast_enabled": 0,
+    "max_loss_pct": 0.01,
+    "trailing_trigger_pct": 0.30,
+    "trailing_distance_atr": 1.0,
+    "trading_capital": None,
 }
 
 STATE_COLUMNS = list(DEFAULT_STATE.keys())
@@ -72,6 +76,10 @@ def init_db(db_path: str = DB_PATH) -> None:
                 fast_symbols TEXT,
                 fast_timeframe TEXT NOT NULL DEFAULT 'M5',
                 fast_enabled INTEGER NOT NULL DEFAULT 0,
+                max_loss_pct REAL NOT NULL DEFAULT 0.01,
+                trailing_trigger_pct REAL NOT NULL DEFAULT 0.30,
+                trailing_distance_atr REAL NOT NULL DEFAULT 1.0,
+                trading_capital REAL,
                 updated_at TEXT
             )
         """)
@@ -96,6 +104,8 @@ def init_db(db_path: str = DB_PATH) -> None:
         for col in ("mode", "obsidian_path"):
             if col not in existing_cols:
                 conn.execute(f"ALTER TABLE bot_trades ADD COLUMN {col} TEXT")
+        if "close_price" not in existing_cols:
+            conn.execute("ALTER TABLE bot_trades ADD COLUMN close_price REAL")
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS backtest_runs (
@@ -121,7 +131,14 @@ def init_db(db_path: str = DB_PATH) -> None:
         for col in ("trend_enabled", "mean_reversion_enabled"):
             if col not in state_cols:
                 conn.execute(f"ALTER TABLE bot_state ADD COLUMN {col} INTEGER NOT NULL DEFAULT 1")
-        for col, ddl in (("fast_timeframe", "TEXT NOT NULL DEFAULT 'M5'"), ("fast_enabled", "INTEGER NOT NULL DEFAULT 0")):
+        for col, ddl in (
+            ("fast_timeframe", "TEXT NOT NULL DEFAULT 'M5'"),
+            ("fast_enabled", "INTEGER NOT NULL DEFAULT 0"),
+            ("max_loss_pct", "REAL NOT NULL DEFAULT 0.01"),
+            ("trailing_trigger_pct", "REAL NOT NULL DEFAULT 0.30"),
+            ("trailing_distance_atr", "REAL NOT NULL DEFAULT 1.0"),
+            ("trading_capital", "REAL"),
+        ):
             if col not in state_cols:
                 conn.execute(f"ALTER TABLE bot_state ADD COLUMN {col} {ddl}")
         for col in ("trend_symbols", "mean_reversion_symbols", "fast_symbols"):

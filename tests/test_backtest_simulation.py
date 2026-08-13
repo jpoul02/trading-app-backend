@@ -79,6 +79,34 @@ def test_trade_closes_at_stop_loss():
     assert result["trades"][0]["profit"] == -9.0
 
 
+def test_max_loss_pct_closes_before_wider_atr_stop_loss():
+    # ATR SL sits at 1.0985 (entry - 1.5*atr); max_loss_pct=0.1% is tighter, at 1.0989.
+    # Candle only reaches 1.0987 — never touches the ATR SL — but the hard stop must
+    # still close the trade, since it's the effective (tighter) stop.
+    df = pd.DataFrame([
+        {"time": 0, "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0},
+        {"time": 1, "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0},
+        {"time": 2, "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0},
+        {"time": 3, "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0},
+        {"time": 4, "open": 1.1, "high": 1.1000, "low": 1.0987, "close": 1.0995},
+    ])
+
+    def signal_fn(window):
+        if len(window) == 4:
+            return {"signal": "COMPRAR FUERTE", "signal_reason": "x", "last_close": 1.1000, "atr": 0.001, "bb_mid": 1.1000}
+        return {"signal": "ESPERAR", "signal_reason": "x", "last_close": 1.1000, "atr": 0.001, "bb_mid": 1.1000}
+
+    result = backtest_engine.simulate_strategy(
+        df, "trend", risk_pct=0.01, symbol_meta=_symbol_meta(),
+        starting_balance=1000, warmup=3, signal_fn=signal_fn,
+        max_loss_pct=0.001,
+    )
+
+    assert result["total_trades"] == 1
+    assert result["trades"][0]["exit"] == 1.0989  # hard stop, tighter than the 1.0985 ATR SL
+    assert result["trades"][0]["profit"] == -6.6
+
+
 def test_same_candle_touching_both_sl_and_tp_assumes_sl():
     df = pd.DataFrame([
         {"time": 0, "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0},

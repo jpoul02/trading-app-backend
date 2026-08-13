@@ -14,6 +14,8 @@ except ImportError:
 
 from dotenv import load_dotenv
 
+import bot_db
+
 try:
     import pandas as pd
     import pandas_ta as ta  # type: ignore
@@ -397,12 +399,22 @@ def place_order(symbol: str, action: str, volume: float, sl: float = 0.0,
     if result.retcode != mt5.TRADE_RETCODE_DONE:
         return {"success": False, "error": f"Error {result.retcode}: {result.comment}"}
 
+    # Query the actual position back — the broker can normalize/round sl & tp
+    # (symbol digits, min stop distance) to something slightly different from
+    # what we requested. Recording the broker-confirmed values, not our raw
+    # request, keeps the "original SL" audit trail accurate.
+    confirmed = mt5.positions_get(ticket=result.order)
+    confirmed_sl = confirmed[0].sl if confirmed else None
+    confirmed_tp = confirmed[0].tp if confirmed else None
+
     return {
         "success": True,
         "order": result.order,
         "volume": result.volume,
         "price": result.price,
         "comment": result.comment,
+        "sl": confirmed_sl,
+        "tp": confirmed_tp,
     }
 
 
@@ -462,6 +474,31 @@ def close_position_by_ticket(ticket: int) -> dict:
 @router.post("/close/{ticket}")
 async def close_position(ticket: int):
     return close_position_by_ticket(ticket)
+
+
+def modify_position_sltp(ticket: int, sl: float, tp: float | None) -> dict:
+    ok, err = _connect()
+    if not ok:
+        return {"success": False, "error": err}
+
+    positions = mt5.positions_get(ticket=ticket)
+    if not positions:
+        return {"success": False, "error": f"Posición #{ticket} no encontrada"}
+    pos = positions[0]
+
+    request = {
+        "action": mt5.TRADE_ACTION_SLTP,
+        "position": ticket,
+        "symbol": pos.symbol,
+        "sl": sl,
+        "tp": tp if tp is not None else pos.tp,
+    }
+    result = mt5.order_send(request)
+    if result is None:
+        return {"success": False, "error": str(mt5.last_error())}
+    if result.retcode != mt5.TRADE_RETCODE_DONE:
+        return {"success": False, "error": f"Error {result.retcode}: {result.comment}"}
+    return {"success": True}
 
 
 @router.get("/indicators/{symbol}")
@@ -570,17 +607,40 @@ async def ws_account(websocket: WebSocket):
             else:
                 info = mt5.account_info()
                 raw_pos = mt5.positions_get() or []
+                original_sl_by_ticket = {
+                    t["ticket"]: t["sl"] for t in bot_db.get_open_trades() if t["ticket"] is not None
+                }
+                bot_state = bot_db.get_state()
+                base_magic = bot_state["magic"]
+
+                def _position_margin(p) -> float | None:
+                    order_type = mt5.ORDER_TYPE_BUY if p.type == 0 else mt5.ORDER_TYPE_SELL
+                    margin = mt5.order_calc_margin(order_type, p.symbol, p.volume, p.price_open)
+                    return round(margin, 2) if margin is not None else None
+
+                def _position_mode(p) -> str:
+                    if p.magic == base_magic:
+                        return "trend"
+                    if p.magic == base_magic + 1:
+                        return "mean_reversion"
+                    if p.magic == base_magic + 2:
+                        return "fast"
+                    return "manual"
+
                 positions = [
                     {
                         "ticket": p.ticket,
                         "symbol": p.symbol,
                         "type": "BUY" if p.type == 0 else "SELL",
-                        "volume": p.volume,
+                        "mode": _position_mode(p),
+                        "volume": round(p.volume, 2),
                         "open_price": p.price_open,
                         "current_price": p.price_current,
                         "sl": p.sl,
+                        "sl_original": original_sl_by_ticket.get(p.ticket),
                         "tp": p.tp,
                         "profit": p.profit,
+                        "margin": _position_margin(p),
                         "swap": p.swap,
                         "open_time": datetime.fromtimestamp(p.time, tz=timezone.utc).isoformat(),
                         "comment": p.comment,

@@ -26,6 +26,7 @@ def run_single_backtest(symbol: str, timeframe: str, date_from: datetime, date_t
                         strategy: str, risk_pct: float, starting_balance: float):
     from routers import mt5 as mt5_router
 
+    bot_db.init_db()
     df = backtest_engine.fetch_historical_candles(symbol, timeframe, date_from, date_to)
     if df is None or len(df) <= WARMUP:
         return {"error": f"No hay suficiente historial para {symbol} {timeframe} en ese rango"}
@@ -38,14 +39,17 @@ def run_single_backtest(symbol: str, timeframe: str, date_from: datetime, date_t
         "volume_step": info.volume_step, "volume_min": info.volume_min,
     }
 
+    state = bot_db.get_state()
     result = backtest_engine.simulate_strategy(
         df, strategy, risk_pct, symbol_meta, starting_balance, warmup=WARMUP,
+        max_loss_pct=state.get("max_loss_pct", 0),
+        trailing_trigger_pct=state.get("trailing_trigger_pct", 0),
+        trailing_distance_atr=state.get("trailing_distance_atr", 0),
     )
     result["symbol"] = symbol.upper()
     result["timeframe"] = timeframe.upper()
     result["strategy"] = strategy
 
-    bot_db.init_db()
     run_id = bot_db.save_backtest_run(
         symbol=result["symbol"], timeframe=result["timeframe"], strategy=strategy,
         date_from=date_from.date().isoformat(), date_to=date_to.date().isoformat(),

@@ -112,6 +112,50 @@ def calc_position_size(balance: float, risk_pct: float, sl_distance: float,
     return max(volume, volume_min)
 
 
+def manage_open_position(pos: dict, atr: float, max_loss_pct: float = 0,
+                          trailing_trigger_pct: float = 0, trailing_distance_atr: float = 0) -> dict:
+    """Decide whether an open position should be hard-closed or trailed.
+
+    pos: {"type": "buy"|"sell", "open_price": float, "current_price": float,
+          "sl": float | None, "tp": float}
+    Hard stop takes priority over trailing — a big adverse move closes the
+    position outright instead of waiting for the (wider) ATR-based SL.
+    trailing_trigger_pct: fraction (0-1) of the entry→TP distance the price
+    must cover before trailing kicks in (e.g. 0.30 = 30% of the way to TP).
+    """
+    direction = pos["type"]
+    entry = pos["open_price"]
+    current = pos["current_price"]
+    tp = pos.get("tp")
+
+    adverse_pct = (entry - current) / entry if direction == "buy" else (current - entry) / entry
+    if max_loss_pct and adverse_pct >= max_loss_pct:
+        return {"action": "close", "reason": "max_loss_pct"}
+
+    if not atr or not trailing_trigger_pct or not tp:
+        return {"action": "none"}
+
+    tp_distance = (tp - entry) if direction == "buy" else (entry - tp)
+    if tp_distance <= 0:
+        return {"action": "none"}
+
+    progress_pct = (current - entry) / tp_distance if direction == "buy" else (entry - current) / tp_distance
+    if progress_pct < trailing_trigger_pct:
+        return {"action": "none"}
+
+    sl = pos.get("sl")
+    if direction == "buy":
+        new_sl = current - trailing_distance_atr * atr
+        if sl is not None and new_sl <= sl:
+            return {"action": "none"}
+    else:
+        new_sl = current + trailing_distance_atr * atr
+        if sl is not None and new_sl >= sl:
+            return {"action": "none"}
+
+    return {"action": "modify_sl", "sl": new_sl, "tp": tp}
+
+
 def check_kill_switch(state: dict, balance: float, equity: float, today: str) -> dict:
     changes: dict = {}
 
@@ -190,8 +234,8 @@ def process_symbol_tick(symbol: str, candles_df: pd.DataFrame, state: dict,
             "direction": direction,
             "volume": result.get("volume", volume),
             "price": result.get("price", entry_price),
-            "sl": sl,
-            "tp": tp,
+            "sl": result.get("sl", sl),
+            "tp": result.get("tp", tp),
             "signal_reason": signal_info["signal_reason"],
         }
 
@@ -244,8 +288,8 @@ def process_symbol_tick_fast(symbol: str, candles_df: pd.DataFrame, state: dict,
             "direction": direction,
             "volume": result.get("volume", volume),
             "price": result.get("price", entry_price),
-            "sl": sl,
-            "tp": tp,
+            "sl": result.get("sl", sl),
+            "tp": result.get("tp", tp),
             "signal_reason": signal_info["signal_reason"],
         }
 
@@ -331,8 +375,8 @@ def process_symbol_tick_mean_reversion(symbol: str, candles_df: pd.DataFrame, st
             "direction": direction,
             "volume": result.get("volume", volume),
             "price": result.get("price", entry_price),
-            "sl": sl,
-            "tp": tp,
+            "sl": result.get("sl", sl),
+            "tp": result.get("tp", tp),
             "signal_reason": signal_info["signal_reason"],
         }
 
@@ -417,9 +461,9 @@ async def run_bot_loop():
                         state.update(changes)
 
                     # ── Close detection ─────────────────────────────────────
+                    live_positions = mt5_router.mt5.positions_get() or []
                     open_trades = bot_db.get_open_trades()
                     if open_trades:
-                        live_positions = mt5_router.mt5.positions_get() or []
                         live_tickets = {p.ticket for p in live_positions}
                         for trade in find_closed_trades(open_trades, live_tickets):
                             deals = mt5_router.mt5.history_deals_get(position=trade["ticket"]) or []
@@ -428,10 +472,57 @@ async def run_bot_loop():
                                 continue
                             closed_at = datetime.fromtimestamp(close_deal.time, tz=timezone.utc).isoformat()
                             bot_db.update_trade(bot_db.DB_PATH, trade["id"], status="closed",
-                                                 profit=close_deal.profit, closed_at=closed_at)
+                                                 profit=close_deal.profit, closed_at=closed_at,
+                                                 close_price=close_deal.price)
                             if trade.get("obsidian_path"):
                                 try:
                                     obsidian_journal.write_trade_closed(trade["obsidian_path"], close_deal.profit, closed_at)
+                                except Exception:
+                                    traceback.print_exc()
+
+                    # ── Position management: hard stop + ATR trailing SL ────
+                    # Runs every tick (not gated on new-candle) so a fast adverse
+                    # move gets caught before waiting for the wider ATR-based SL.
+                    own_magics = {state["magic"], state["magic"] + 1, state["magic"] + 2}
+                    obsidian_path_by_ticket = {
+                        t["ticket"]: t["obsidian_path"] for t in open_trades if t.get("ticket") is not None
+                    }
+                    for pos in live_positions:
+                        if pos.magic not in own_magics:
+                            continue
+                        tf_key = "fast_timeframe" if pos.magic == state["magic"] + 2 else "timeframe"
+                        tf = mt5_router.TIMEFRAME_MAP.get(state[tf_key].upper())
+                        rates = mt5_router.mt5.copy_rates_from_pos(pos.symbol, tf, 0, 20)
+                        if rates is None or len(rates) == 0:
+                            continue
+                        atr_series = ta.atr(pd.Series(rates["high"]), pd.Series(rates["low"]), pd.Series(rates["close"]), length=14)
+                        atr = float(atr_series.iloc[-1]) if atr_series is not None and pd.notna(atr_series.iloc[-1]) else 0.0
+
+                        decision = manage_open_position(
+                            {
+                                "type": "buy" if pos.type == 0 else "sell",
+                                "open_price": pos.price_open,
+                                "current_price": pos.price_current,
+                                "sl": pos.sl or None,
+                                "tp": pos.tp,
+                            },
+                            atr,
+                            max_loss_pct=state.get("max_loss_pct", 0),
+                            trailing_trigger_pct=state.get("trailing_trigger_pct", 0),
+                            trailing_distance_atr=state.get("trailing_distance_atr", 0),
+                        )
+                        if decision["action"] == "close":
+                            mt5_router.close_position_by_ticket(pos.ticket)
+                        elif decision["action"] == "modify_sl":
+                            result = mt5_router.modify_position_sltp(pos.ticket, decision["sl"], decision["tp"])
+                            path = obsidian_path_by_ticket.get(pos.ticket)
+                            if result.get("success") and path:
+                                try:
+                                    obsidian_journal.write_trade_sl_adjusted(
+                                        path, old_sl=pos.sl, new_sl=decision["sl"],
+                                        current_price=pos.price_current,
+                                        adjusted_at=datetime.now(timezone.utc).isoformat(),
+                                    )
                                 except Exception:
                                     traceback.print_exc()
 
@@ -474,7 +565,8 @@ async def run_bot_loop():
                                 continue
 
                             result = process_fn(symbol, df, state, positions_for_mode,
-                                                 account.balance, symbol_meta, _place_order)
+                                                 state.get("trading_capital") or account.balance,
+                                                 symbol_meta, _place_order)
                             _record_trade_result(mode, symbol, result, obsidian_journal)
 
                     # ── Signal evaluation: fast (independent timeframe) ─────────────
@@ -507,7 +599,8 @@ async def run_bot_loop():
                                 return mt5_router.place_order(**kw)
 
                             result = process_symbol_tick_fast(symbol, df, state, fast_positions,
-                                                                account.balance, symbol_meta, _place_order)
+                                                                state.get("trading_capital") or account.balance,
+                                                                symbol_meta, _place_order)
                             _record_trade_result("fast", symbol, result, obsidian_journal)
 
             sleep_for = min(

@@ -2,12 +2,14 @@ import pandas as pd
 
 from bot_engine import (
     add_indicators, calc_position_size, calc_sl_tp,
-    compute_mean_reversion_signal, compute_signal,
+    compute_mean_reversion_signal, compute_signal, manage_open_position,
 )
 
 
 def simulate_strategy(candles_df, strategy: str, risk_pct: float, symbol_meta: dict,
-                       starting_balance: float, warmup: int = 200, signal_fn=None) -> dict:
+                       starting_balance: float, warmup: int = 200, signal_fn=None,
+                       max_loss_pct: float = 0, trailing_trigger_pct: float = 0,
+                       trailing_distance_atr: float = 0) -> dict:
     if signal_fn is None:
         # All indicators here (SMA/RSI/MACD/BBands/ATR/Stochastic) are trailing —
         # computing them once over the full series gives identical values to
@@ -20,6 +22,8 @@ def simulate_strategy(candles_df, strategy: str, risk_pct: float, symbol_meta: d
         def signal_fn(window):
             idx = len(window) - 1
             return base_fn(enriched.iloc[: idx + 1])
+
+    atr_series = add_indicators(candles_df.copy())["atr"] if trailing_trigger_pct else None
 
     balance = starting_balance
     trades: list = []
@@ -52,21 +56,32 @@ def simulate_strategy(candles_df, strategy: str, risk_pct: float, symbol_meta: d
                     tick_value=symbol_meta["tick_value"], tick_size=symbol_meta["tick_size"],
                     volume_step=symbol_meta["volume_step"], volume_min=symbol_meta["volume_min"],
                 )
+                hard_stop_price = None
+                if max_loss_pct:
+                    hard_stop_price = entry * (1 - max_loss_pct) if direction == "buy" else entry * (1 + max_loss_pct)
                 position = {
                     "direction": direction, "entry": entry, "sl": sl, "tp": tp,
+                    "hard_stop_price": hard_stop_price,
                     "volume": volume, "opened_at": int(row["time"]),
                 }
         else:
+            effective_sl = position["sl"]
+            if position["hard_stop_price"] is not None:
+                effective_sl = (
+                    max(effective_sl, position["hard_stop_price"]) if position["direction"] == "buy"
+                    else min(effective_sl, position["hard_stop_price"])
+                )
+
             if position["direction"] == "buy":
-                hit_sl = row["low"] <= position["sl"]
+                hit_sl = row["low"] <= effective_sl
                 hit_tp = row["high"] >= position["tp"]
             else:
-                hit_sl = row["high"] >= position["sl"]
+                hit_sl = row["high"] >= effective_sl
                 hit_tp = row["low"] <= position["tp"]
 
             close_price = None
             if hit_sl:
-                close_price = position["sl"]  # SL takes priority if both hit in the same candle
+                close_price = effective_sl  # SL (or hard stop, whichever tighter) takes priority if both hit
             elif hit_tp:
                 close_price = position["tp"]
 
@@ -79,11 +94,23 @@ def simulate_strategy(candles_df, strategy: str, risk_pct: float, symbol_meta: d
                 balance += profit
                 trades.append({
                     "direction": position["direction"], "entry": position["entry"],
-                    "exit": close_price, "sl": position["sl"], "tp": position["tp"],
+                    "exit": close_price, "sl": effective_sl, "tp": position["tp"],
                     "volume": position["volume"], "profit": round(profit, 2),
                     "opened_at": position["opened_at"], "closed_at": int(row["time"]),
                 })
                 position = None
+            elif trailing_trigger_pct:
+                atr_at_row = float(atr_series.iloc[i]) if atr_series is not None and pd.notna(atr_series.iloc[i]) else 0.0
+                decision = manage_open_position(
+                    {
+                        "type": position["direction"], "open_price": position["entry"],
+                        "current_price": row["close"], "sl": position["sl"], "tp": position["tp"],
+                    },
+                    atr_at_row, max_loss_pct=0,
+                    trailing_trigger_pct=trailing_trigger_pct, trailing_distance_atr=trailing_distance_atr,
+                )
+                if decision["action"] == "modify_sl":
+                    position["sl"] = decision["sl"]
 
         i += 1
 

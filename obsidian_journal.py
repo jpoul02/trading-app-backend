@@ -41,6 +41,11 @@ Abierta automáticamente por el bot.
     return path
 
 
+def write_trade_sl_adjusted(path: str, old_sl: float, new_sl: float, current_price: float, adjusted_at: str) -> None:
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(f"\n**SL ajustado (trailing)** {adjusted_at}: {old_sl} → {new_sl} (precio {current_price})\n")
+
+
 def write_trade_closed(path: str, profit: float, closed_at: str) -> None:
     with open(path, encoding="utf-8") as f:
         content = f.read()
