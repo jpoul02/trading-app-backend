@@ -352,12 +352,52 @@ def next_candle_sleep_seconds(timeframe: str, now: datetime | None = None) -> fl
     return max(remaining, 5)
 
 
+def _build_symbol_meta(info) -> dict:
+    return {
+        "tick_value": info.trade_tick_value,
+        "tick_size": info.trade_tick_size,
+        "volume_step": info.volume_step,
+        "volume_min": info.volume_min,
+    }
+
+
+def _record_trade_result(mode: str, symbol: str, result: dict, obsidian_journal, log_trade_fn=None) -> None:
+    if log_trade_fn is None:
+        log_trade_fn = bot_db.log_trade
+
+    if result["action"] == "opened":
+        opened_at = datetime.now(timezone.utc).isoformat()
+        obsidian_path = None
+        try:
+            obsidian_path = obsidian_journal.write_trade_opened({
+                "symbol": symbol, "mode": mode, "action": result["direction"],
+                "volume": result["volume"], "price": result["price"],
+                "sl": result["sl"], "tp": result["tp"],
+                "opened_at": opened_at, "signal_reason": result["signal_reason"],
+            })
+        except Exception:
+            traceback.print_exc()
+        log_trade_fn(
+            ticket=result["ticket"], symbol=symbol, action=result["direction"],
+            volume=result["volume"], price=result["price"], sl=result["sl"],
+            tp=result["tp"], signal_reason=result["signal_reason"], status="open",
+            mode=mode, obsidian_path=obsidian_path, opened_at=opened_at,
+        )
+    elif result["action"] == "rejected":
+        log_trade_fn(
+            ticket=None, symbol=symbol, action="unknown", volume=0,
+            price=0, sl=0, tp=0, signal_reason=result["reason"], status="rejected",
+            mode=mode,
+        )
+
+
 async def run_bot_loop():
     from routers import mt5 as mt5_router
     import obsidian_journal
 
     bot_db.init_db()
     last_candle_time: dict[str, int] = {}
+    last_candle_time_fast: dict[str, int] = {}
 
     while True:
         try:
@@ -391,12 +431,10 @@ async def run_bot_loop():
                                 except Exception:
                                     traceback.print_exc()
 
-                    # ── Signal evaluation (trend + mean reversion) ──────────
-                    for symbol in state["symbols"].split(","):
-                        symbol = symbol.strip().upper()
-                        if not symbol:
-                            continue
-
+                    # ── Signal evaluation: trend + mean reversion (shared timeframe) ──
+                    trend_symbols = {s.strip().upper() for s in state["trend_symbols"].split(",") if s.strip()}
+                    mr_symbols = {s.strip().upper() for s in state["mean_reversion_symbols"].split(",") if s.strip()}
+                    for symbol in sorted(trend_symbols | mr_symbols):
                         tf = mt5_router.TIMEFRAME_MAP.get(state["timeframe"].upper())
                         rates = mt5_router.mt5.copy_rates_from_pos(symbol, tf, 0, 200)
                         if rates is None or len(rates) == 0:
@@ -419,50 +457,54 @@ async def run_bot_loop():
                         info = mt5_router.mt5.symbol_info(symbol)
                         if info is None:
                             continue
-                        symbol_meta = {
-                            "tick_value": info.trade_tick_value,
-                            "tick_size": info.trade_tick_size,
-                            "volume_step": info.volume_step,
-                            "volume_min": info.volume_min,
-                        }
+                        symbol_meta = _build_symbol_meta(info)
 
                         def _place_order(**kw):
                             return mt5_router.place_order(**kw)
 
-                        for mode, positions_for_mode, process_fn, enabled_key in (
-                            ("trend", trend_positions, process_symbol_tick, "trend_enabled"),
-                            ("mean_reversion", mr_positions, process_symbol_tick_mean_reversion, "mean_reversion_enabled"),
+                        for mode, positions_for_mode, process_fn, enabled_key, mode_symbols in (
+                            ("trend", trend_positions, process_symbol_tick, "trend_enabled", trend_symbols),
+                            ("mean_reversion", mr_positions, process_symbol_tick_mean_reversion, "mean_reversion_enabled", mr_symbols),
                         ):
-                            if not state.get(enabled_key, 1):
+                            if not state.get(enabled_key, 1) or symbol not in mode_symbols:
                                 continue
 
                             result = process_fn(symbol, df, state, positions_for_mode,
                                                  account.balance, symbol_meta, _place_order)
+                            _record_trade_result(mode, symbol, result, obsidian_journal)
 
-                            if result["action"] == "opened":
-                                opened_at = datetime.now(timezone.utc).isoformat()
-                                obsidian_path = None
-                                try:
-                                    obsidian_path = obsidian_journal.write_trade_opened({
-                                        "symbol": symbol, "mode": mode, "action": result["direction"],
-                                        "volume": result["volume"], "price": result["price"],
-                                        "sl": result["sl"], "tp": result["tp"],
-                                        "opened_at": opened_at, "signal_reason": result["signal_reason"],
-                                    })
-                                except Exception:
-                                    traceback.print_exc()
-                                bot_db.log_trade(
-                                    ticket=result["ticket"], symbol=symbol, action=result["direction"],
-                                    volume=result["volume"], price=result["price"], sl=result["sl"],
-                                    tp=result["tp"], signal_reason=result["signal_reason"], status="open",
-                                    mode=mode, obsidian_path=obsidian_path, opened_at=opened_at,
-                                )
-                            elif result["action"] == "rejected":
-                                bot_db.log_trade(
-                                    ticket=None, symbol=symbol, action="unknown", volume=0,
-                                    price=0, sl=0, tp=0, signal_reason=result["reason"], status="rejected",
-                                    mode=mode,
-                                )
+                    # ── Signal evaluation: fast (independent timeframe) ─────────────
+                    fast_symbols = {s.strip().upper() for s in state["fast_symbols"].split(",") if s.strip()}
+                    if state.get("fast_enabled") and fast_symbols:
+                        for symbol in sorted(fast_symbols):
+                            tf = mt5_router.TIMEFRAME_MAP.get(state["fast_timeframe"].upper())
+                            rates = mt5_router.mt5.copy_rates_from_pos(symbol, tf, 0, 200)
+                            if rates is None or len(rates) == 0:
+                                continue
+
+                            latest_time = int(rates[-1]["time"])
+                            if last_candle_time_fast.get(symbol) == latest_time:
+                                continue
+                            last_candle_time_fast[symbol] = latest_time
+
+                            df = pd.DataFrame(rates)
+                            df = add_indicators(df)
+
+                            positions = mt5_router.mt5.positions_get(symbol=symbol) or []
+                            fast_magic = state["magic"] + 2
+                            fast_positions = [p for p in positions if p.magic == fast_magic]
+
+                            info = mt5_router.mt5.symbol_info(symbol)
+                            if info is None:
+                                continue
+                            symbol_meta = _build_symbol_meta(info)
+
+                            def _place_order(**kw):
+                                return mt5_router.place_order(**kw)
+
+                            result = process_symbol_tick_fast(symbol, df, state, fast_positions,
+                                                                account.balance, symbol_meta, _place_order)
+                            _record_trade_result("fast", symbol, result, obsidian_journal)
 
             sleep_for = min(
                 next_candle_sleep_seconds(state.get("timeframe", "M15")) if ok else 30,
