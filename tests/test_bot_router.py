@@ -84,7 +84,7 @@ def test_trades_list_pagination(client):
     assert body["trades"][0]["ticket"] == 2
 
 
-def test_get_and_update_config(client):
+def test_get_and_update_config(client, monkeypatch):
     resp = client.get("/api/bot/config")
     assert resp.status_code == 200
     body = resp.json()
@@ -92,6 +92,13 @@ def test_get_and_update_config(client):
     assert body["trend_symbols"] == ["EURUSD", "GBPUSD", "USDJPY", "USDCHF"]
     assert body["fast_timeframe"] == "M5"
     assert body["fast_enabled"] is False
+
+    # trend is enabled by default, so changing trend_symbols/risk_pct now runs the gate
+    # (Critical-1 fix) — stub it, this test is about config CRUD, not gate behavior.
+    monkeypatch.setattr(
+        bot_router, "check_mode_backtest_gate",
+        lambda mode, symbols, timeframe, risk_pct, run_backtest_fn=None: {"passed": True, "failures": []},
+    )
 
     resp = client.put("/api/bot/config", json={"risk_pct": 0.02, "trend_symbols": ["EURUSD", "GBPUSD"]})
     assert resp.status_code == 200
@@ -174,3 +181,44 @@ def test_update_config_disable_does_not_trigger_gate(client, monkeypatch):
 
     assert resp.status_code == 200
     assert calls == []
+
+
+def test_check_mode_backtest_gate_fails_on_exactly_break_even_profit_factor():
+    gate = bot_router.check_mode_backtest_gate(
+        "trend", ["EURUSD"], "M15", 0.01, run_backtest_fn=lambda *a: {"profit_factor": 1.0}
+    )
+    assert gate["passed"] is False
+
+
+def test_update_config_gates_symbol_change_on_already_enabled_mode(client, monkeypatch):
+    # trend starts enabled by default; changing its symbols without touching trend_enabled must still gate
+    calls = []
+
+    def fake_gate(mode, symbols, timeframe, risk_pct, run_backtest_fn=None):
+        calls.append((mode, tuple(symbols)))
+        return {"passed": False, "failures": [{"symbol": "XAUUSD", "profit_factor": 0.5, "error": None}]}
+
+    monkeypatch.setattr(bot_router, "check_mode_backtest_gate", fake_gate)
+
+    resp = client.put("/api/bot/config", json={"trend_symbols": ["XAUUSD"]})
+
+    assert resp.status_code == 400
+    assert calls == [("trend", ("XAUUSD",))]
+    config = client.get("/api/bot/config").json()
+    assert config["trend_symbols"] != ["XAUUSD"]  # rejected — not persisted
+
+
+def test_update_config_rejects_enable_with_explicit_empty_symbols(client, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        bot_router, "check_mode_backtest_gate",
+        lambda mode, symbols, timeframe, risk_pct, run_backtest_fn=None: calls.append(tuple(symbols)) or {
+            "passed": False,
+            "failures": [{"symbol": None, "profit_factor": None, "error": "No hay símbolos configurados para este modo"}],
+        },
+    )
+
+    resp = client.put("/api/bot/config", json={"fast_enabled": True, "fast_symbols": []})
+
+    assert resp.status_code == 400
+    assert calls == [()]  # gate saw the real empty list, not a stale fallback

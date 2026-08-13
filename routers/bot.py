@@ -147,23 +147,44 @@ def update_config(body: ConfigUpdate):
     state = bot_db.get_state(DB_PATH)
     risk_pct = body.risk_pct if body.risk_pct is not None else state["risk_pct"]
 
-    if body.trend_enabled is True:
-        symbols = body.trend_symbols or _split_symbols(state["trend_symbols"])
-        timeframe = body.timeframe or state["timeframe"]
+    trend_enabled_after = body.trend_enabled if body.trend_enabled is not None else bool(state["trend_enabled"])
+    touches_trend = (
+        body.trend_enabled is True or body.trend_symbols is not None
+        or body.timeframe is not None or body.risk_pct is not None
+    )
+    if trend_enabled_after and touches_trend:
+        symbols = body.trend_symbols if body.trend_symbols is not None else _split_symbols(state["trend_symbols"])
+        timeframe = body.timeframe if body.timeframe is not None else state["timeframe"]
         gate = check_mode_backtest_gate("trend", symbols, timeframe, risk_pct)
         if not gate["passed"]:
             raise HTTPException(status_code=400, detail={"mode": "trend", "failures": gate["failures"]})
 
-    if body.mean_reversion_enabled is True:
-        symbols = body.mean_reversion_symbols or _split_symbols(state["mean_reversion_symbols"])
-        timeframe = body.timeframe or state["timeframe"]
+    mr_enabled_after = (
+        body.mean_reversion_enabled if body.mean_reversion_enabled is not None
+        else bool(state["mean_reversion_enabled"])
+    )
+    touches_mr = (
+        body.mean_reversion_enabled is True or body.mean_reversion_symbols is not None
+        or body.timeframe is not None or body.risk_pct is not None
+    )
+    if mr_enabled_after and touches_mr:
+        symbols = (
+            body.mean_reversion_symbols if body.mean_reversion_symbols is not None
+            else _split_symbols(state["mean_reversion_symbols"])
+        )
+        timeframe = body.timeframe if body.timeframe is not None else state["timeframe"]
         gate = check_mode_backtest_gate("mean_reversion", symbols, timeframe, risk_pct)
         if not gate["passed"]:
             raise HTTPException(status_code=400, detail={"mode": "mean_reversion", "failures": gate["failures"]})
 
-    if body.fast_enabled is True:
-        symbols = body.fast_symbols or _split_symbols(state["fast_symbols"])
-        timeframe = body.fast_timeframe or state["fast_timeframe"]
+    fast_enabled_after = body.fast_enabled if body.fast_enabled is not None else bool(state["fast_enabled"])
+    touches_fast = (
+        body.fast_enabled is True or body.fast_symbols is not None
+        or body.fast_timeframe is not None or body.risk_pct is not None
+    )
+    if fast_enabled_after and touches_fast:
+        symbols = body.fast_symbols if body.fast_symbols is not None else _split_symbols(state["fast_symbols"])
+        timeframe = body.fast_timeframe if body.fast_timeframe is not None else state["fast_timeframe"]
         gate = check_mode_backtest_gate("fast", symbols, timeframe, risk_pct)
         if not gate["passed"]:
             raise HTTPException(status_code=400, detail={"mode": "fast", "failures": gate["failures"]})
