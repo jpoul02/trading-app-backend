@@ -17,13 +17,13 @@ class BacktestRequest(BaseModel):
     timeframe: str = "M15"
     date_from: str  # "YYYY-MM-DD"
     date_to: str
-    strategy: str  # "trend" | "mean_reversion" | "both"
+    strategy: str  # "trend" | "mean_reversion" | "fast" | "both"
     risk_pct: float = 0.01
     starting_balance: float = 100000
 
 
-def _run_one(symbol: str, timeframe: str, date_from: datetime, date_to: datetime,
-             strategy: str, risk_pct: float, starting_balance: float):
+def run_single_backtest(symbol: str, timeframe: str, date_from: datetime, date_to: datetime,
+                        strategy: str, risk_pct: float, starting_balance: float):
     from routers import mt5 as mt5_router
 
     df = backtest_engine.fetch_historical_candles(symbol, timeframe, date_from, date_to)
@@ -65,11 +65,12 @@ def run_backtest(req: BacktestRequest):
 
     if req.strategy == "both":
         return {
-            "trend": _run_one(req.symbol, req.timeframe, date_from, date_to, "trend", req.risk_pct, req.starting_balance),
-            "mean_reversion": _run_one(req.symbol, req.timeframe, date_from, date_to, "mean_reversion", req.risk_pct, req.starting_balance),
+            "trend": run_single_backtest(req.symbol, req.timeframe, date_from, date_to, "trend", req.risk_pct, req.starting_balance),
+            "mean_reversion": run_single_backtest(req.symbol, req.timeframe, date_from, date_to, "mean_reversion", req.risk_pct, req.starting_balance),
+            "fast": run_single_backtest(req.symbol, req.timeframe, date_from, date_to, "fast", req.risk_pct, req.starting_balance),
         }
 
-    return _run_one(req.symbol, req.timeframe, date_from, date_to, req.strategy, req.risk_pct, req.starting_balance)
+    return run_single_backtest(req.symbol, req.timeframe, date_from, date_to, req.strategy, req.risk_pct, req.starting_balance)
 
 
 @router.get("/history")
