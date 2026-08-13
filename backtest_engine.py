@@ -4,12 +4,14 @@ from bot_engine import (
     add_indicators, calc_position_size, calc_sl_tp,
     compute_mean_reversion_signal, compute_signal, manage_open_position,
 )
+import ml_features
 
 
 def simulate_strategy(candles_df, strategy: str, risk_pct: float, symbol_meta: dict,
                        starting_balance: float, warmup: int = 200, signal_fn=None,
                        max_loss_pct: float = 0, trailing_trigger_pct: float = 0,
                        trailing_distance_atr: float = 0) -> dict:
+    own_signal_fn = signal_fn is None
     if signal_fn is None:
         # All indicators here (SMA/RSI/MACD/BBands/ATR/Stochastic) are trailing —
         # computing them once over the full series gives identical values to
@@ -62,6 +64,7 @@ def simulate_strategy(candles_df, strategy: str, risk_pct: float, symbol_meta: d
                 position = {
                     "direction": direction, "entry": entry, "sl": sl, "tp": tp,
                     "hard_stop_price": hard_stop_price,
+                    "features": ml_features.extract_entry_features(enriched, i) if own_signal_fn else {},
                     "volume": volume, "opened_at": int(row["time"]),
                 }
         else:
@@ -97,6 +100,7 @@ def simulate_strategy(candles_df, strategy: str, risk_pct: float, symbol_meta: d
                     "exit": close_price, "sl": effective_sl, "tp": position["tp"],
                     "volume": position["volume"], "profit": round(profit, 2),
                     "opened_at": position["opened_at"], "closed_at": int(row["time"]),
+                    "features": position["features"],
                 })
                 position = None
             elif trailing_trigger_pct:

@@ -3,6 +3,7 @@ import time
 
 import pandas as pd
 import backtest_engine
+import ml_features
 
 
 def _candles(n=5):
@@ -213,3 +214,47 @@ def test_trend_strategy_still_ignores_weak_signal():
     )
 
     assert result["total_trades"] == 0
+
+
+def test_trades_include_feature_snapshot_when_using_default_signal_fn():
+    n = 400
+    rows = []
+    for i in range(n):
+        base = 1.10 + 0.05 * math.sin(i / 40) + (i % 7) * 0.0003
+        rows.append({
+            "time": i, "open": base, "close": base + 0.0002,
+            "high": base + 0.0015, "low": base - 0.0015,
+        })
+    df = pd.DataFrame(rows)
+
+    result = backtest_engine.simulate_strategy(
+        df, "trend", risk_pct=0.01,
+        symbol_meta={"tick_value": 1.0, "tick_size": 0.00001, "volume_step": 0.01, "volume_min": 0.01},
+        starting_balance=100000, warmup=200,
+    )
+
+    assert result["total_trades"] > 0
+    for t in result["trades"]:
+        assert set(ml_features.FEATURE_KEYS).issubset(t["features"].keys())
+
+
+def test_trades_have_empty_features_when_custom_signal_fn_used():
+    df = pd.DataFrame([
+        {"time": 0, "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0},
+        {"time": 1, "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0},
+        {"time": 2, "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0},
+        {"time": 3, "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0},
+        {"time": 4, "open": 1.1, "high": 1.1030, "low": 1.0990, "close": 1.1010},
+    ])
+
+    def signal_fn(window):
+        if len(window) == 4:
+            return {"signal": "COMPRAR FUERTE", "signal_reason": "x", "last_close": 1.1000, "atr": 0.001, "bb_mid": 1.1000}
+        return {"signal": "ESPERAR", "signal_reason": "x", "last_close": 1.1000, "atr": 0.001, "bb_mid": 1.1000}
+
+    result = backtest_engine.simulate_strategy(
+        df, "trend", risk_pct=0.01, symbol_meta=_symbol_meta(),
+        starting_balance=1000, warmup=3, signal_fn=signal_fn,
+    )
+
+    assert result["trades"][0]["features"] == {}
