@@ -108,6 +108,9 @@ def get_config():
         "trailing_trigger_pct": state["trailing_trigger_pct"],
         "trailing_distance_atr": state["trailing_distance_atr"],
         "trading_capital": state["trading_capital"],
+        "ml_filter_trend_enabled": bool(state["ml_filter_trend_enabled"]),
+        "ml_filter_fast_enabled": bool(state["ml_filter_fast_enabled"]),
+        "ml_filter_min_confidence": state["ml_filter_min_confidence"],
     }
 
 
@@ -127,6 +130,9 @@ class ConfigUpdate(BaseModel):
     trailing_trigger_pct: float | None = None
     trailing_distance_atr: float | None = None
     trading_capital: float | None = None
+    ml_filter_trend_enabled: bool | None = None
+    ml_filter_fast_enabled: bool | None = None
+    ml_filter_min_confidence: float | None = None
 
 
 def check_mode_backtest_gate(mode: str, symbols: list[str], timeframe: str, risk_pct: float,
@@ -239,5 +245,11 @@ def update_config(body: ConfigUpdate):
         fields["trailing_distance_atr"] = body.trailing_distance_atr
     if body.trading_capital is not None:
         fields["trading_capital"] = body.trading_capital if body.trading_capital > 0 else None
+    if body.ml_filter_trend_enabled is not None:
+        fields["ml_filter_trend_enabled"] = int(body.ml_filter_trend_enabled)
+    if body.ml_filter_fast_enabled is not None:
+        fields["ml_filter_fast_enabled"] = int(body.ml_filter_fast_enabled)
+    if body.ml_filter_min_confidence is not None:
+        fields["ml_filter_min_confidence"] = body.ml_filter_min_confidence
     bot_db.update_state(DB_PATH, **fields)
     return get_config()

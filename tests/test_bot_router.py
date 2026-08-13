@@ -245,3 +245,19 @@ def test_update_config_rejects_enable_with_explicit_empty_symbols(client, monkey
 
     assert resp.status_code == 400
     assert calls == [()]  # gate saw the real empty list, not a stale fallback
+
+
+def test_get_and_update_ml_filter_config(client):
+    resp = client.get("/api/bot/config")
+    body = resp.json()
+    assert body["ml_filter_trend_enabled"] is False
+    assert body["ml_filter_fast_enabled"] is False
+    assert body["ml_filter_min_confidence"] == 0.5
+
+    resp = client.put("/api/bot/config", json={
+        "ml_filter_trend_enabled": True, "ml_filter_min_confidence": 0.6,
+    })
+
+    assert resp.status_code == 200
+    assert resp.json()["ml_filter_trend_enabled"] is True
+    assert resp.json()["ml_filter_min_confidence"] == 0.6
