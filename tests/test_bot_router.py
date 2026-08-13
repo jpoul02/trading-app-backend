@@ -27,6 +27,22 @@ def test_status_returns_default_state(client):
     assert body["running"] is True
     assert body["kill_switch_tripped"] is False
     assert body["symbols"] == ["EURUSD", "GBPUSD", "USDJPY", "USDCHF"]
+    assert body["realized_profit_today"] == 0.0
+    assert body["realized_profit_total"] == 0.0
+
+
+def test_status_reports_realized_profit_from_closed_trades(client):
+    import routers.bot as bot_router
+    trade_id = bot_db.log_trade(
+        bot_router.DB_PATH, ticket=1, symbol="EURUSD", action="buy", volume=0.1,
+        price=1.1, sl=1.09, tp=1.11, signal_reason="x", status="open",
+    )
+    bot_db.update_trade(bot_router.DB_PATH, trade_id, status="closed", profit=42.5, closed_at="2020-01-01T00:00:00+00:00")
+
+    resp = client.get("/api/bot/status")
+
+    assert resp.json()["realized_profit_total"] == 42.5
+    assert resp.json()["realized_profit_today"] == 0.0  # closed_at is not today
 
 
 def test_stop_and_start(client):

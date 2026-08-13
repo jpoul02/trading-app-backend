@@ -45,6 +45,9 @@ def _state_to_status(state: dict) -> dict:
 def get_status():
     bot_db.init_db(DB_PATH)
     status = _state_to_status(bot_db.get_state(DB_PATH))
+    realized = bot_db.get_realized_profit(DB_PATH)
+    status["realized_profit_today"] = realized["today"]
+    status["realized_profit_total"] = realized["total"]
 
     from routers import mt5 as mt5_router
     ok, _ = mt5_router._connect()

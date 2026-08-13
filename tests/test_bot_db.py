@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import datetime, timezone
 
 import bot_db
 
@@ -219,3 +220,31 @@ def test_init_db_migration_backfills_per_mode_symbols_from_legacy_symbols(tmp_pa
     assert state["fast_timeframe"] == "M5"
     assert state["fast_enabled"] == 0
     assert state["running"] == 1  # pre-existing data preserved
+
+
+def test_get_realized_profit_splits_today_from_total(tmp_path):
+    db_path = str(tmp_path / "test.db")
+    bot_db.init_db(db_path)
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    t1 = bot_db.log_trade(
+        db_path, ticket=1, symbol="EURUSD", action="buy", volume=0.1,
+        price=1.1, sl=1.09, tp=1.11, signal_reason="x", status="open",
+    )
+    bot_db.update_trade(db_path, t1, status="closed", profit=15.0, closed_at=f"{today}T09:00:00+00:00")
+
+    t2 = bot_db.log_trade(
+        db_path, ticket=2, symbol="GBPUSD", action="sell", volume=0.1,
+        price=1.2, sl=1.21, tp=1.19, signal_reason="x", status="open",
+    )
+    bot_db.update_trade(db_path, t2, status="closed", profit=-5.0, closed_at="2020-01-01T09:00:00+00:00")
+
+    bot_db.log_trade(
+        db_path, ticket=3, symbol="USDJPY", action="buy", volume=0.1,
+        price=150.0, sl=149.5, tp=150.5, signal_reason="x", status="open",
+    )  # still open — must not count toward either total
+
+    realized = bot_db.get_realized_profit(db_path)
+
+    assert realized["today"] == 15.0
+    assert realized["total"] == 10.0  # 15.0 + (-5.0), open trade excluded

@@ -274,6 +274,20 @@ def count_trades(db_path: str = DB_PATH) -> int:
         conn.close()
 
 
+def get_realized_profit(db_path: str = DB_PATH) -> dict:
+    conn = _connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT profit, closed_at FROM bot_trades WHERE status = 'closed'"
+        ).fetchall()
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        total = sum(r["profit"] or 0 for r in rows)
+        today_total = sum(r["profit"] or 0 for r in rows if r["closed_at"] and r["closed_at"].startswith(today))
+        return {"today": round(today_total, 2), "total": round(total, 2)}
+    finally:
+        conn.close()
+
+
 def save_backtest_run(db_path: str = DB_PATH, **fields) -> int:
     conn = _connect(db_path)
     try:
