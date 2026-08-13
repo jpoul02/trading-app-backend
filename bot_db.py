@@ -19,6 +19,11 @@ DEFAULT_STATE = {
     "magic": 424001,
     "trend_enabled": 1,
     "mean_reversion_enabled": 1,
+    "trend_symbols": "EURUSD,GBPUSD,USDJPY,USDCHF",
+    "mean_reversion_symbols": "EURUSD,GBPUSD,USDJPY,USDCHF",
+    "fast_symbols": "EURUSD,GBPUSD,USDJPY,USDCHF",
+    "fast_timeframe": "M5",
+    "fast_enabled": 0,
 }
 
 STATE_COLUMNS = list(DEFAULT_STATE.keys())
@@ -62,6 +67,11 @@ def init_db(db_path: str = DB_PATH) -> None:
                 magic INTEGER NOT NULL,
                 trend_enabled INTEGER NOT NULL DEFAULT 1,
                 mean_reversion_enabled INTEGER NOT NULL DEFAULT 1,
+                trend_symbols TEXT,
+                mean_reversion_symbols TEXT,
+                fast_symbols TEXT,
+                fast_timeframe TEXT NOT NULL DEFAULT 'M5',
+                fast_enabled INTEGER NOT NULL DEFAULT 0,
                 updated_at TEXT
             )
         """)
@@ -111,6 +121,19 @@ def init_db(db_path: str = DB_PATH) -> None:
         for col in ("trend_enabled", "mean_reversion_enabled"):
             if col not in state_cols:
                 conn.execute(f"ALTER TABLE bot_state ADD COLUMN {col} INTEGER NOT NULL DEFAULT 1")
+        for col, ddl in (("fast_timeframe", "TEXT NOT NULL DEFAULT 'M5'"), ("fast_enabled", "INTEGER NOT NULL DEFAULT 0")):
+            if col not in state_cols:
+                conn.execute(f"ALTER TABLE bot_state ADD COLUMN {col} {ddl}")
+        for col in ("trend_symbols", "mean_reversion_symbols", "fast_symbols"):
+            if col not in state_cols:
+                conn.execute(f"ALTER TABLE bot_state ADD COLUMN {col} TEXT")
+        conn.execute(
+            "UPDATE bot_state SET "
+            "trend_symbols = COALESCE(trend_symbols, symbols), "
+            "mean_reversion_symbols = COALESCE(mean_reversion_symbols, symbols), "
+            "fast_symbols = COALESCE(fast_symbols, symbols) "
+            "WHERE id = 1"
+        )
 
         existing = conn.execute("SELECT id FROM bot_state WHERE id = 1").fetchone()
         if existing is None:

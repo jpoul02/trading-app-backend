@@ -1,3 +1,5 @@
+import sqlite3
+
 import bot_db
 
 
@@ -160,3 +162,60 @@ def test_get_open_trades_returns_only_open_status(tmp_path):
 
     assert len(open_trades) == 1
     assert open_trades[0]["id"] == open_id
+
+
+def test_init_db_creates_per_mode_symbol_and_fast_fields(tmp_path):
+    db_path = str(tmp_path / "test.db")
+    bot_db.init_db(db_path)
+
+    state = bot_db.get_state(db_path)
+
+    assert state["trend_symbols"] == "EURUSD,GBPUSD,USDJPY,USDCHF"
+    assert state["mean_reversion_symbols"] == "EURUSD,GBPUSD,USDJPY,USDCHF"
+    assert state["fast_symbols"] == "EURUSD,GBPUSD,USDJPY,USDCHF"
+    assert state["fast_timeframe"] == "M5"
+    assert state["fast_enabled"] == 0
+
+
+def test_init_db_migration_backfills_per_mode_symbols_from_legacy_symbols(tmp_path):
+    db_path = str(tmp_path / "test.db")
+    # Simulate a pre-migration DB: legacy schema only, no per-mode symbol
+    # columns and no fast_* columns yet — same shape bot_state.db has on disk today.
+    conn = sqlite3.connect(db_path)
+    conn.execute("""
+        CREATE TABLE bot_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            running INTEGER NOT NULL,
+            kill_switch_tripped INTEGER NOT NULL,
+            disabled_reason TEXT,
+            day_start_balance REAL,
+            day_start_date TEXT,
+            account_start_balance REAL,
+            symbols TEXT NOT NULL,
+            timeframe TEXT NOT NULL,
+            risk_pct REAL NOT NULL,
+            daily_loss_limit_pct REAL NOT NULL,
+            max_drawdown_pct REAL NOT NULL,
+            magic INTEGER NOT NULL,
+            trend_enabled INTEGER NOT NULL DEFAULT 1,
+            mean_reversion_enabled INTEGER NOT NULL DEFAULT 1,
+            updated_at TEXT
+        )
+    """)
+    conn.execute(
+        "INSERT INTO bot_state (id, running, kill_switch_tripped, symbols, timeframe, "
+        "risk_pct, daily_loss_limit_pct, max_drawdown_pct, magic) "
+        "VALUES (1, 1, 0, 'EURUSD,GBPUSD', 'M15', 0.01, 0.03, 0.10, 424001)"
+    )
+    conn.commit()
+    conn.close()
+
+    bot_db.init_db(db_path)  # must migrate the existing row, not overwrite it
+
+    state = bot_db.get_state(db_path)
+    assert state["trend_symbols"] == "EURUSD,GBPUSD"
+    assert state["mean_reversion_symbols"] == "EURUSD,GBPUSD"
+    assert state["fast_symbols"] == "EURUSD,GBPUSD"
+    assert state["fast_timeframe"] == "M5"
+    assert state["fast_enabled"] == 0
+    assert state["running"] == 1  # pre-existing data preserved
