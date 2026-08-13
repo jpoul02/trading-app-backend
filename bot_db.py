@@ -28,6 +28,9 @@ DEFAULT_STATE = {
     "trailing_trigger_pct": 0.30,
     "trailing_distance_atr": 1.0,
     "trading_capital": None,
+    "ml_filter_trend_enabled": 0,
+    "ml_filter_fast_enabled": 0,
+    "ml_filter_min_confidence": 0.5,
 }
 
 STATE_COLUMNS = list(DEFAULT_STATE.keys())
@@ -42,6 +45,10 @@ BACKTEST_RUN_COLUMNS = [
     "symbol", "timeframe", "strategy", "date_from", "date_to",
     "risk_pct", "starting_balance", "total_trades", "win_rate_pct",
     "total_profit", "max_drawdown_pct", "profit_factor", "full_result_json",
+]
+
+ML_MODEL_COLUMNS = [
+    "mode", "n_trades", "profit_factor_filtered", "profit_factor_unfiltered", "enabled",
 ]
 
 
@@ -80,6 +87,9 @@ def init_db(db_path: str = DB_PATH) -> None:
                 trailing_trigger_pct REAL NOT NULL DEFAULT 0.30,
                 trailing_distance_atr REAL NOT NULL DEFAULT 1.0,
                 trading_capital REAL,
+                ml_filter_trend_enabled INTEGER NOT NULL DEFAULT 0,
+                ml_filter_fast_enabled INTEGER NOT NULL DEFAULT 0,
+                ml_filter_min_confidence REAL NOT NULL DEFAULT 0.5,
                 updated_at TEXT
             )
         """)
@@ -127,6 +137,18 @@ def init_db(db_path: str = DB_PATH) -> None:
             )
         """)
 
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS ml_models (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                mode TEXT NOT NULL,
+                n_trades INTEGER,
+                profit_factor_filtered REAL,
+                profit_factor_unfiltered REAL,
+                enabled INTEGER NOT NULL DEFAULT 0,
+                trained_at TEXT
+            )
+        """)
+
         state_cols = {row["name"] for row in conn.execute("PRAGMA table_info(bot_state)").fetchall()}
         for col in ("trend_enabled", "mean_reversion_enabled"):
             if col not in state_cols:
@@ -138,6 +160,9 @@ def init_db(db_path: str = DB_PATH) -> None:
             ("trailing_trigger_pct", "REAL NOT NULL DEFAULT 0.30"),
             ("trailing_distance_atr", "REAL NOT NULL DEFAULT 1.0"),
             ("trading_capital", "REAL"),
+            ("ml_filter_trend_enabled", "INTEGER NOT NULL DEFAULT 0"),
+            ("ml_filter_fast_enabled", "INTEGER NOT NULL DEFAULT 0"),
+            ("ml_filter_min_confidence", "REAL NOT NULL DEFAULT 0.5"),
         ):
             if col not in state_cols:
                 conn.execute(f"ALTER TABLE bot_state ADD COLUMN {col} {ddl}")
@@ -278,6 +303,31 @@ def get_backtest_run(db_path: str = DB_PATH, run_id: int = None) -> dict | None:
     conn = _connect(db_path)
     try:
         row = conn.execute("SELECT * FROM backtest_runs WHERE id = ?", (run_id,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def save_ml_model_run(db_path: str = DB_PATH, **fields) -> int:
+    conn = _connect(db_path)
+    try:
+        fields = {c: fields.get(c) for c in ML_MODEL_COLUMNS}
+        fields["trained_at"] = datetime.now(timezone.utc).isoformat()
+        cols = ", ".join(fields.keys())
+        placeholders = ", ".join(f":{c}" for c in fields.keys())
+        cur = conn.execute(f"INSERT INTO ml_models ({cols}) VALUES ({placeholders})", fields)
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def get_latest_ml_model(db_path: str = DB_PATH, mode: str = None) -> dict | None:
+    conn = _connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT * FROM ml_models WHERE mode = ? ORDER BY id DESC LIMIT 1", (mode,)
+        ).fetchone()
         return dict(row) if row else None
     finally:
         conn.close()
