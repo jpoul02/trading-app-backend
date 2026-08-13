@@ -607,8 +607,12 @@ async def ws_account(websocket: WebSocket):
             else:
                 info = mt5.account_info()
                 raw_pos = mt5.positions_get() or []
+                open_trades = bot_db.get_open_trades()
                 original_sl_by_ticket = {
-                    t["ticket"]: t["sl"] for t in bot_db.get_open_trades() if t["ticket"] is not None
+                    t["ticket"]: t["sl"] for t in open_trades if t["ticket"] is not None
+                }
+                ml_confidence_by_ticket = {
+                    t["ticket"]: t["ml_confidence"] for t in open_trades if t["ticket"] is not None
                 }
                 bot_state = bot_db.get_state()
                 base_magic = bot_state["magic"]
@@ -638,6 +642,7 @@ async def ws_account(websocket: WebSocket):
                         "current_price": p.price_current,
                         "sl": p.sl,
                         "sl_original": original_sl_by_ticket.get(p.ticket),
+                        "ml_confidence": ml_confidence_by_ticket.get(p.ticket),
                         "tp": p.tp,
                         "profit": p.profit,
                         "margin": _position_margin(p),

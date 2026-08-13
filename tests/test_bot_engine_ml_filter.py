@@ -58,6 +58,7 @@ def test_ml_filter_allows_entry_above_confidence_trend(monkeypatch):
     )
 
     assert result["action"] == "opened"
+    assert result["ml_confidence"] == 0.8  # persisted so the UI can show "approved at X%"
 
 
 def test_ml_filter_disabled_by_default_does_not_block_trend(monkeypatch):
@@ -70,6 +71,7 @@ def test_ml_filter_disabled_by_default_does_not_block_trend(monkeypatch):
     )
 
     assert result["action"] == "opened"  # filter off — even a 0.0 confidence model doesn't block
+    assert result["ml_confidence"] is None  # filter never evaluated, nothing to report
 
 
 def test_ml_filter_enabled_but_no_model_does_not_block_trend(monkeypatch):

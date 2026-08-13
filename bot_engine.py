@@ -212,6 +212,7 @@ def process_symbol_tick(symbol: str, candles_df: pd.DataFrame, state: dict,
     if signal_info["signal"] not in ("COMPRAR FUERTE", "VENDER FUERTE"):
         return {"action": "none", "reason": "no_strong_signal", "signal": signal_info["signal"]}
 
+    ml_confidence = None
     if state.get("ml_filter_trend_enabled"):
         import ml_entry_filter
         import ml_features
@@ -225,6 +226,7 @@ def process_symbol_tick(symbol: str, candles_df: pd.DataFrame, state: dict,
                     "action": "rejected", "symbol": symbol,
                     "reason": f"Vetado por ML (confianza {win_prob:.0%})",
                 }
+            ml_confidence = round(win_prob, 4)
 
     direction = "buy" if signal_info["signal"] == "COMPRAR FUERTE" else "sell"
     entry_price = signal_info["last_close"]
@@ -256,6 +258,7 @@ def process_symbol_tick(symbol: str, candles_df: pd.DataFrame, state: dict,
             "sl": result.get("sl", sl),
             "tp": result.get("tp", tp),
             "signal_reason": signal_info["signal_reason"],
+            "ml_confidence": ml_confidence,
         }
 
     return {"action": "rejected", "symbol": symbol, "reason": result.get("error", "unknown error")}
@@ -279,6 +282,7 @@ def process_symbol_tick_fast(symbol: str, candles_df: pd.DataFrame, state: dict,
     if signal_info["signal"] not in buy_signals + sell_signals:
         return {"action": "none", "reason": "no_strong_signal", "signal": signal_info["signal"]}
 
+    ml_confidence = None
     if state.get("ml_filter_fast_enabled"):
         import ml_entry_filter
         import ml_features
@@ -292,6 +296,7 @@ def process_symbol_tick_fast(symbol: str, candles_df: pd.DataFrame, state: dict,
                     "action": "rejected", "symbol": symbol,
                     "reason": f"Vetado por ML (confianza {win_prob:.0%})",
                 }
+            ml_confidence = round(win_prob, 4)
 
     direction = "buy" if signal_info["signal"] in buy_signals else "sell"
     entry_price = signal_info["last_close"]
@@ -324,6 +329,7 @@ def process_symbol_tick_fast(symbol: str, candles_df: pd.DataFrame, state: dict,
             "sl": result.get("sl", sl),
             "tp": result.get("tp", tp),
             "signal_reason": signal_info["signal_reason"],
+            "ml_confidence": ml_confidence,
         }
 
     return {"action": "rejected", "symbol": symbol, "reason": result.get("error", "unknown error")}
@@ -463,6 +469,7 @@ def _record_trade_result(mode: str, symbol: str, result: dict, obsidian_journal,
             volume=result["volume"], price=result["price"], sl=result["sl"],
             tp=result["tp"], signal_reason=result["signal_reason"], status="open",
             mode=mode, obsidian_path=obsidian_path, opened_at=opened_at,
+            ml_confidence=result.get("ml_confidence"),
         )
     elif result["action"] == "rejected":
         log_trade_fn(

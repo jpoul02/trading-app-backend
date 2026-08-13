@@ -38,7 +38,7 @@ STATE_COLUMNS = list(DEFAULT_STATE.keys())
 TRADE_COLUMNS = [
     "ticket", "symbol", "action", "volume", "price", "sl", "tp",
     "signal_reason", "status", "profit", "opened_at", "closed_at",
-    "mode", "obsidian_path",
+    "mode", "obsidian_path", "ml_confidence",
 ]
 
 BACKTEST_RUN_COLUMNS = [
@@ -116,6 +116,8 @@ def init_db(db_path: str = DB_PATH) -> None:
                 conn.execute(f"ALTER TABLE bot_trades ADD COLUMN {col} TEXT")
         if "close_price" not in existing_cols:
             conn.execute("ALTER TABLE bot_trades ADD COLUMN close_price REAL")
+        if "ml_confidence" not in existing_cols:
+            conn.execute("ALTER TABLE bot_trades ADD COLUMN ml_confidence REAL")
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS backtest_runs (
