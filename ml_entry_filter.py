@@ -103,3 +103,29 @@ def train_entry_filter_model(mode: str, symbols: list[str], timeframe: str,
         "trained": passed, "n_trades": len(all_trades),
         "profit_factor_filtered": filtered_pf, "profit_factor_unfiltered": unfiltered_pf,
     }
+
+
+_model_cache: dict[str, tuple[float, object]] = {}
+
+
+def load_entry_filter_model_cached(mode: str):
+    path = MODEL_DIR / f"entry_filter_{mode}.joblib"
+    if not path.exists():
+        _model_cache.pop(mode, None)
+        return None
+    mtime = path.stat().st_mtime
+    cached = _model_cache.get(mode)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
+    model = joblib.load(path)
+    _model_cache[mode] = (mtime, model)
+    return model
+
+
+def predict_win_probability(model, features: dict) -> float:
+    vector = [ml_features.features_to_vector(features)]
+    return float(model.predict_proba(vector)[0][1])
+
+
+def should_veto_entry(win_probability: float, min_confidence: float) -> bool:
+    return win_probability < min_confidence
