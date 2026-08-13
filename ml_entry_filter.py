@@ -11,16 +11,12 @@ import ml_features
 MODEL_DIR = Path(__file__).parent / "ml_models"
 GATE_LOOKBACK_DAYS = 730  # 2 years — default for higher timeframes
 
-# Lower timeframes generate far more signals per day but brokers/terminals often
-# keep less history for them (a demo server may simply not have 2 years of M5
-# candles). Shorter windows here still yield plenty of trades to train on while
-# staying inside what's actually available.
+# Only M1/M5 are known to run into a broker/terminal history limit (confirmed:
+# this demo server has no 2-year M5 history for EURUSD) — M15 and up already
+# train fine on the full 2-year default, so they aren't shortened "just in case".
 LOOKBACK_DAYS_BY_TIMEFRAME = {
     "M1": 30,
     "M5": 90,
-    "M15": 180,
-    "M30": 365,
-    "H1": 365,
 }
 
 
