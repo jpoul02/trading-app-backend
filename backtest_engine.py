@@ -15,7 +15,7 @@ def simulate_strategy(candles_df, strategy: str, risk_pct: float, symbol_meta: d
         # doing that per step. No lookahead: row i's indicators never depend on
         # rows after i either way.
         enriched = add_indicators(candles_df.copy())
-        base_fn = compute_signal if strategy == "trend" else compute_mean_reversion_signal
+        base_fn = compute_signal if strategy in ("trend", "fast") else compute_mean_reversion_signal
 
         def signal_fn(window):
             idx = len(window) - 1
@@ -33,8 +33,11 @@ def simulate_strategy(candles_df, strategy: str, risk_pct: float, symbol_meta: d
         if position is None:
             window = candles_df.iloc[: i + 1]
             info = signal_fn(window)
-            if info["signal"] in ("COMPRAR FUERTE", "VENDER FUERTE"):
-                direction = "buy" if info["signal"] == "COMPRAR FUERTE" else "sell"
+            entry_signals = ("COMPRAR FUERTE", "VENDER FUERTE")
+            if strategy == "fast":
+                entry_signals = entry_signals + ("TENDENCIA ALCISTA", "TENDENCIA BAJISTA")
+            if info["signal"] in entry_signals:
+                direction = "buy" if info["signal"] in ("COMPRAR FUERTE", "TENDENCIA ALCISTA") else "sell"
                 entry = info["last_close"]
                 atr = info["atr"] or entry * 0.001
                 sl, tp = calc_sl_tp(entry, atr, direction)

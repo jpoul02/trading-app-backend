@@ -146,3 +146,42 @@ def test_default_signal_fn_runs_fast_on_a_realistic_series():
     assert elapsed < 5.0
     assert "total_trades" in result
     assert result["total_trades"] >= 0
+
+
+def test_fast_strategy_opens_on_weak_trend_signal():
+    df = pd.DataFrame([
+        {"time": 0, "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0},
+        {"time": 1, "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0},
+        {"time": 2, "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0},
+        {"time": 3, "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0},
+        {"time": 4, "open": 1.1, "high": 1.1030, "low": 1.0990, "close": 1.1010},
+    ])
+
+    def signal_fn(window):
+        if len(window) == 4:
+            return {"signal": "TENDENCIA ALCISTA", "signal_reason": "x", "last_close": 1.1000, "atr": 0.001, "bb_mid": 1.1000}
+        return {"signal": "ESPERAR", "signal_reason": "x", "last_close": 1.1000, "atr": 0.001, "bb_mid": 1.1000}
+
+    result = backtest_engine.simulate_strategy(
+        df, "fast", risk_pct=0.01, symbol_meta=_symbol_meta(),
+        starting_balance=1000, warmup=3, signal_fn=signal_fn,
+    )
+
+    assert result["total_trades"] == 1
+
+
+def test_trend_strategy_still_ignores_weak_signal():
+    # Regression guard: widening the entry filter for "fast" must not leak into "trend".
+    df = pd.DataFrame([
+        {"time": i, "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0} for i in range(6)
+    ])
+
+    def signal_fn(window):
+        return {"signal": "TENDENCIA ALCISTA", "signal_reason": "x", "last_close": 1.0, "atr": 0.001, "bb_mid": 1.0}
+
+    result = backtest_engine.simulate_strategy(
+        df, "trend", risk_pct=0.01, symbol_meta=_symbol_meta(),
+        starting_balance=1000, warmup=3, signal_fn=signal_fn,
+    )
+
+    assert result["total_trades"] == 0
