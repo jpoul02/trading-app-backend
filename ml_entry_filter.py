@@ -9,7 +9,23 @@ import bot_db
 import ml_features
 
 MODEL_DIR = Path(__file__).parent / "ml_models"
-GATE_LOOKBACK_DAYS = 730  # 2 years, matches the existing backtest convention
+GATE_LOOKBACK_DAYS = 730  # 2 years — default for higher timeframes
+
+# Lower timeframes generate far more signals per day but brokers/terminals often
+# keep less history for them (a demo server may simply not have 2 years of M5
+# candles). Shorter windows here still yield plenty of trades to train on while
+# staying inside what's actually available.
+LOOKBACK_DAYS_BY_TIMEFRAME = {
+    "M1": 30,
+    "M5": 90,
+    "M15": 180,
+    "M30": 365,
+    "H1": 365,
+}
+
+
+def _lookback_days(timeframe: str) -> int:
+    return LOOKBACK_DAYS_BY_TIMEFRAME.get(timeframe.upper(), GATE_LOOKBACK_DAYS)
 
 
 def _profit_factor(trades: list[dict]) -> float | None:
@@ -48,7 +64,7 @@ def train_entry_filter_model(mode: str, symbols: list[str], timeframe: str,
             }
 
     date_to = datetime.now(timezone.utc)
-    date_from = date_to - timedelta(days=GATE_LOOKBACK_DAYS)
+    date_from = date_to - timedelta(days=_lookback_days(timeframe))
 
     all_trades = []
     for symbol in symbols:

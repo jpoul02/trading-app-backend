@@ -136,6 +136,30 @@ def test_train_result_is_json_serializable_with_numpy_sourced_profits(tmp_path, 
     json.dumps(result)  # raises TypeError if anything is still numpy-typed
 
 
+def test_train_uses_a_shorter_lookback_for_fine_timeframes(tmp_path, monkeypatch):
+    # A demo/broker server often doesn't retain 2 years of M5 history — training on
+    # M5 needs a much shorter window than the 2-year default used for M15+.
+    monkeypatch.setattr(ml_entry_filter, "MODEL_DIR", tmp_path)
+    requested_ranges = []
+
+    def fake_fetch(symbol, timeframe, date_from, date_to):
+        requested_ranges.append((date_to - date_from).days)
+        return None  # short-circuit — this test only cares about the requested range
+
+    ml_entry_filter.train_entry_filter_model(
+        "fast", ["EURUSD"], "M5", 0.01, min_confidence=0.5,
+        fetch_candles_fn=fake_fetch, symbol_info_fn=_fake_symbol_meta,
+        simulate_fn=lambda *a, **kw: {"trades": []}, save_run_fn=lambda **kw: None,
+    )
+
+    assert requested_ranges == [90]  # M5 -> 90 days, not the 730-day default
+
+
+def test_lookback_days_defaults_to_two_years_for_unmapped_timeframes():
+    assert ml_entry_filter._lookback_days("D1") == 730
+    assert ml_entry_filter._lookback_days("M5") == 90
+
+
 def test_train_skips_symbols_with_insufficient_history():
     def fake_simulate(df, mode, risk_pct, symbol_meta, starting_balance, warmup, **kwargs):
         return {"trades": [_fake_trade(10.0, i, i % 2 == 0) for i in range(40)]}
