@@ -21,3 +21,6 @@ env/
 # OS
 .DS_Store
 Thumbs.db
+
+# subagent-driven-development scratch workspace (belongs in the parent repo)
+.superpowers/
