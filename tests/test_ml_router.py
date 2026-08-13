@@ -22,7 +22,7 @@ def test_train_calls_pipeline_for_trend_and_fast(client, monkeypatch):
     test_client, _ = client
     calls = []
 
-    def fake_train(mode, symbols, timeframe, risk_pct, min_confidence):
+    def fake_train(mode, symbols, timeframe, risk_pct, min_confidence, **kwargs):
         calls.append(mode)
         return {"trained": True, "n_trades": 100, "profit_factor_filtered": 1.4, "profit_factor_unfiltered": 1.1}
 

@@ -34,7 +34,7 @@ def test_train_rejects_when_no_symbols():
 
 
 def test_train_rejects_when_too_few_trades():
-    def fake_simulate(df, mode, risk_pct, symbol_meta, starting_balance, warmup):
+    def fake_simulate(df, mode, risk_pct, symbol_meta, starting_balance, warmup, **kwargs):
         return {"trades": [_fake_trade(10.0, i, True) for i in range(5)]}
 
     result = ml_entry_filter.train_entry_filter_model(
@@ -49,7 +49,7 @@ def test_train_rejects_when_too_few_trades():
 
 
 def test_train_rejects_when_all_train_labels_are_the_same():
-    def fake_simulate(df, mode, risk_pct, symbol_meta, starting_balance, warmup):
+    def fake_simulate(df, mode, risk_pct, symbol_meta, starting_balance, warmup, **kwargs):
         return {"trades": [_fake_trade(10.0, i, True) for i in range(40)]}  # all wins
 
     result = ml_entry_filter.train_entry_filter_model(
@@ -81,7 +81,7 @@ def test_train_saves_model_when_filter_improves_profit_factor(tmp_path, monkeypa
             profit = 20.0 if win_shape else -10.0
         trades.append(_fake_trade(profit, i, win_shape))
 
-    def fake_simulate(df, mode, risk_pct, symbol_meta, starting_balance, warmup):
+    def fake_simulate(df, mode, risk_pct, symbol_meta, starting_balance, warmup, **kwargs):
         return {"trades": trades}
 
     saved = {}
@@ -103,7 +103,7 @@ def test_train_saves_model_when_filter_improves_profit_factor(tmp_path, monkeypa
 
 
 def test_train_skips_symbols_with_insufficient_history():
-    def fake_simulate(df, mode, risk_pct, symbol_meta, starting_balance, warmup):
+    def fake_simulate(df, mode, risk_pct, symbol_meta, starting_balance, warmup, **kwargs):
         return {"trades": [_fake_trade(10.0, i, i % 2 == 0) for i in range(40)]}
 
     result = ml_entry_filter.train_entry_filter_model(

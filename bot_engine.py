@@ -156,6 +156,11 @@ def manage_open_position(pos: dict, atr: float, max_loss_pct: float = 0,
     return {"action": "modify_sl", "sl": new_sl, "tp": tp}
 
 
+def should_log_ml_veto(last_logged: dict, key: tuple, now_ts: float, cooldown_seconds: float = 3600) -> bool:
+    last = last_logged.get(key)
+    return last is None or (now_ts - last) >= cooldown_seconds
+
+
 def check_kill_switch(state: dict, balance: float, equity: float, today: str) -> dict:
     changes: dict = {}
 
@@ -474,6 +479,7 @@ async def run_bot_loop():
     bot_db.init_db()
     last_candle_time: dict[str, int] = {}
     last_candle_time_fast: dict[str, int] = {}
+    last_ml_veto_logged: dict[tuple[str, str], float] = {}
 
     while True:
         try:
@@ -595,6 +601,12 @@ async def run_bot_loop():
                             result = process_fn(symbol, df, state, positions_for_mode,
                                                  state.get("trading_capital") or account.balance,
                                                  symbol_meta, _place_order)
+                            if result["action"] == "rejected" and result.get("reason", "").startswith("Vetado por ML"):
+                                veto_key = (mode, symbol)
+                                now_ts = datetime.now(timezone.utc).timestamp()
+                                if not should_log_ml_veto(last_ml_veto_logged, veto_key, now_ts):
+                                    continue
+                                last_ml_veto_logged[veto_key] = now_ts
                             _record_trade_result(mode, symbol, result, obsidian_journal)
 
                     # ── Signal evaluation: fast (independent timeframe) ─────────────
@@ -629,6 +641,12 @@ async def run_bot_loop():
                             result = process_symbol_tick_fast(symbol, df, state, fast_positions,
                                                                 state.get("trading_capital") or account.balance,
                                                                 symbol_meta, _place_order)
+                            if result["action"] == "rejected" and result.get("reason", "").startswith("Vetado por ML"):
+                                veto_key = ("fast", symbol)
+                                now_ts = datetime.now(timezone.utc).timestamp()
+                                if not should_log_ml_veto(last_ml_veto_logged, veto_key, now_ts):
+                                    continue
+                                last_ml_veto_logged[veto_key] = now_ts
                             _record_trade_result("fast", symbol, result, obsidian_journal)
 
             sleep_for = min(

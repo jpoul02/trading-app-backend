@@ -23,6 +23,8 @@ def _profit_factor(trades: list[dict]) -> float | None:
 def train_entry_filter_model(mode: str, symbols: list[str], timeframe: str,
                               risk_pct: float, min_confidence: float,
                               starting_balance: float = 100000,
+                              max_loss_pct: float = 0, trailing_trigger_pct: float = 0,
+                              trailing_distance_atr: float = 0,
                               fetch_candles_fn=None, symbol_info_fn=None,
                               simulate_fn=None, save_run_fn=None) -> dict:
     if not symbols:
@@ -56,7 +58,11 @@ def train_entry_filter_model(mode: str, symbols: list[str], timeframe: str,
         symbol_meta = symbol_info_fn(symbol)
         if symbol_meta is None:
             continue
-        result = simulate_fn(df, mode, risk_pct, symbol_meta, starting_balance, warmup=200)
+        result = simulate_fn(
+            df, mode, risk_pct, symbol_meta, starting_balance, warmup=200,
+            max_loss_pct=max_loss_pct, trailing_trigger_pct=trailing_trigger_pct,
+            trailing_distance_atr=trailing_distance_atr,
+        )
         all_trades.extend(t for t in result["trades"] if t.get("features"))
 
     if len(all_trades) < 30:

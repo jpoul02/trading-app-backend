@@ -95,3 +95,17 @@ def test_ml_filter_vetoes_entry_below_confidence_fast(monkeypatch):
 
     assert result["action"] == "rejected"
     assert "10%" in result["reason"]
+
+
+def test_should_log_ml_veto_allows_first_log():
+    assert bot_engine.should_log_ml_veto({}, ("trend", "EURUSD"), now_ts=1000.0) is True
+
+
+def test_should_log_ml_veto_blocks_within_cooldown():
+    last_logged = {("trend", "EURUSD"): 1000.0}
+    assert bot_engine.should_log_ml_veto(last_logged, ("trend", "EURUSD"), now_ts=1500.0, cooldown_seconds=3600) is False
+
+
+def test_should_log_ml_veto_allows_after_cooldown():
+    last_logged = {("trend", "EURUSD"): 1000.0}
+    assert bot_engine.should_log_ml_veto(last_logged, ("trend", "EURUSD"), now_ts=1000.0 + 3600, cooldown_seconds=3600) is True

@@ -23,6 +23,9 @@ def train():
         results[mode] = ml_entry_filter.train_entry_filter_model(
             mode, symbols, state[timeframe_key], state["risk_pct"],
             min_confidence=state["ml_filter_min_confidence"],
+            max_loss_pct=state["max_loss_pct"],
+            trailing_trigger_pct=state["trailing_trigger_pct"],
+            trailing_distance_atr=state["trailing_distance_atr"],
         )
     return results
 
