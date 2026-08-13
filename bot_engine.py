@@ -361,6 +361,10 @@ def _build_symbol_meta(info) -> dict:
     }
 
 
+def _parse_symbols(csv: str) -> set[str]:
+    return {s.strip().upper() for s in csv.split(",") if s.strip()}
+
+
 def _record_trade_result(mode: str, symbol: str, result: dict, obsidian_journal, log_trade_fn=None) -> None:
     if log_trade_fn is None:
         log_trade_fn = bot_db.log_trade
@@ -432,8 +436,8 @@ async def run_bot_loop():
                                     traceback.print_exc()
 
                     # ── Signal evaluation: trend + mean reversion (shared timeframe) ──
-                    trend_symbols = {s.strip().upper() for s in state["trend_symbols"].split(",") if s.strip()}
-                    mr_symbols = {s.strip().upper() for s in state["mean_reversion_symbols"].split(",") if s.strip()}
+                    trend_symbols = _parse_symbols(state["trend_symbols"])
+                    mr_symbols = _parse_symbols(state["mean_reversion_symbols"])
                     for symbol in sorted(trend_symbols | mr_symbols):
                         tf = mt5_router.TIMEFRAME_MAP.get(state["timeframe"].upper())
                         rates = mt5_router.mt5.copy_rates_from_pos(symbol, tf, 0, 200)
@@ -474,7 +478,7 @@ async def run_bot_loop():
                             _record_trade_result(mode, symbol, result, obsidian_journal)
 
                     # ── Signal evaluation: fast (independent timeframe) ─────────────
-                    fast_symbols = {s.strip().upper() for s in state["fast_symbols"].split(",") if s.strip()}
+                    fast_symbols = _parse_symbols(state["fast_symbols"])
                     if state.get("fast_enabled") and fast_symbols:
                         for symbol in sorted(fast_symbols):
                             tf = mt5_router.TIMEFRAME_MAP.get(state["fast_timeframe"].upper())

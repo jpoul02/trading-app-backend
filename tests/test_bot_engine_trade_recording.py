@@ -56,6 +56,10 @@ def test_record_trade_result_logs_rejected_trade():
     assert logged[0]["signal_reason"] == "no money"
 
 
+def test_parse_symbols_strips_and_upcases_and_drops_blanks():
+    assert bot_engine._parse_symbols(" eurusd , ,GBPUSD ") == {"EURUSD", "GBPUSD"}
+
+
 def test_record_trade_result_does_nothing_when_no_action():
     logged = []
     result = {"action": "none", "reason": "no_strong_signal"}
