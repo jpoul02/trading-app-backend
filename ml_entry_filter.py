@@ -13,8 +13,8 @@ GATE_LOOKBACK_DAYS = 730  # 2 years, matches the existing backtest convention
 
 
 def _profit_factor(trades: list[dict]) -> float | None:
-    gross_profit = sum(t["profit"] for t in trades if t["profit"] > 0)
-    gross_loss = abs(sum(t["profit"] for t in trades if t["profit"] <= 0))
+    gross_profit = float(sum(t["profit"] for t in trades if t["profit"] > 0))
+    gross_loss = abs(float(sum(t["profit"] for t in trades if t["profit"] <= 0)))
     if gross_loss <= 0:
         return None
     return round(gross_profit / gross_loss, 4)
@@ -94,7 +94,7 @@ def train_entry_filter_model(mode: str, symbols: list[str], timeframe: str,
     # Both sides must be a defined ratio (a None profit factor means zero losses in
     # that slice — nothing to divide by) so "no baseline losses" can never look like
     # an automatic pass for the filtered model.
-    passed = filtered_pf is not None and unfiltered_pf is not None and filtered_pf > unfiltered_pf
+    passed = bool(filtered_pf is not None and unfiltered_pf is not None and filtered_pf > unfiltered_pf)
 
     if passed:
         MODEL_DIR.mkdir(exist_ok=True)

@@ -24,3 +24,7 @@ Thumbs.db
 
 # subagent-driven-development scratch workspace (belongs in the parent repo)
 .superpowers/
+
+# runtime data — local SQLite state and trained ML model files
+bot_state.db
+ml_models/
